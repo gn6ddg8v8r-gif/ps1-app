@@ -1,0 +1,9 @@
+{
+  "appId": "com.YOURNAME.ps1synth",
+  "appName": "PS-1 Pocket Synth",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#E9E6DF"
+  }
+}
