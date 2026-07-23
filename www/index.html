@@ -161,7 +161,7 @@
 
   .row-label { font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.5; margin: 10px 2px 5px; flex-shrink: 0; }
 
-  .waves { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .waves { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
   .wave-btn {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
@@ -328,6 +328,8 @@
     box-shadow: 0 2px 0 rgba(0,0,0,0.18);
   }
   .io-btn:active { transform: translateY(1px); box-shadow: 0 1px 0 rgba(0,0,0,0.2); }
+  .io-btn:disabled { opacity: 0.5; }
+  .io-row.single { grid-template-columns: 1fr; }
 
   .rec-btn {
     font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 0.06em;
@@ -411,7 +413,11 @@
       <button class="wave-btn" data-wave="sine" data-name="SINE">
         <svg viewBox="0 0 26 12"><path d="M1 6 C4 -2 9 -2 13 6 C17 14 22 14 25 6"/></svg>SIN
       </button>
+      <button class="wave-btn" data-wave="sample" data-name="SAMPLE" id="sampleWaveBtn">
+        <svg viewBox="0 0 26 12"><path d="M2 9 V3 M8 11 V1 M13 9 V3 M18 11 V1 M24 9 V3"/></svg>SMP
+      </button>
     </div>
+    <input type="file" id="sampleFile" accept="audio/*" hidden>
 
     <div class="row-label">Controls</div>
     <div class="bank-tabs">
@@ -527,6 +533,11 @@
       <input type="file" id="importFile" accept="application/json" hidden>
     </div>
 
+    <div class="row-label">Audio · renders 4 bars of the current beat as sound</div>
+    <div class="io-row single">
+      <button class="io-btn" id="exportWavBtn">⇩ EXPORT WAV</button>
+    </div>
+
     <div class="hint">Flip to keys and jam over the loop</div>
   </div>
 
@@ -536,7 +547,8 @@
   <h2>Keys</h2>
   Slide your finger across keys to glide · multi-touch works ·
   <b>MAIN / ENV / OSC</b> switch knob banks · drag knobs up/down, or tap <b>− +</b> for fine steps ·
-  <b>▶</b> and <b>●</b> under the octave buttons run the beat and arm recording from here.
+  <b>▶</b> and <b>●</b> under the octave buttons run the beat and arm recording from here ·
+  <b>SMP</b> loads your own audio file as the oscillator's waveform — tap it again while active to swap files.
 
   <h2>Beats</h2>
   Tap drum cells to toggle, drag to paint · <b>Bass</b> cells cycle through notes with each tap ·
@@ -553,6 +565,11 @@
   <h2>Slots</h2>
   Tap <b>SAVE</b>, then a slot letter to store your pattern · tap a filled slot to load it —
   switching slots while playing is live arranging.
+
+  <h2>File</h2>
+  <b>EXPORT</b> / <b>IMPORT</b> save and load your pattern as a small JSON file ·
+  <b>EXPORT WAV</b> renders 4 bars of the current beat to a real audio file you can
+  share or drop into any music app.
 
   <h2>Laptop</h2>
   <b>A S D F G H J K</b> play white keys · <b>W E T Y U</b> play black keys ·
@@ -626,32 +643,34 @@
     return buf;
   }
 
-  function initAudio() {
-    if (ctx) return;
-    ctx = new (window.AudioContext || window.webkitAudioContext)();
-
-    filter = ctx.createBiquadFilter();
+  // Builds the whole synth/drum/effects graph on any BaseAudioContext — the
+  // live AudioContext for normal playback, or a throwaway OfflineAudioContext
+  // when bouncing the current pattern to a WAV file. Assigns onto the shared
+  // module-level node variables, which is safe because the caller (initAudio
+  // or exportWav) has already pointed the shared `ctx` at the right context.
+  function buildAudioGraph(c) {
+    filter = c.createBiquadFilter();
     filter.type = 'lowpass';
     filter.Q.value = 4;
     filter.frequency.value = cutoffHz(params.cutoff.v);
 
-    delayNode = ctx.createDelay(1.0);
-    delayNode.delayTime.value = 60 / 120 * 0.75;
-    delayFeedback = ctx.createGain(); delayFeedback.gain.value = 0.4;
-    delayWet = ctx.createGain(); delayWet.gain.value = params.delay.v;
+    delayNode = c.createDelay(1.0);
+    delayNode.delayTime.value = 60 / bpm * 0.75;
+    delayFeedback = c.createGain(); delayFeedback.gain.value = 0.4;
+    delayWet = c.createGain(); delayWet.gain.value = params.delay.v;
 
-    reverbNode = ctx.createConvolver();
-    reverbNode.buffer = makeImpulse(ctx, 2.2, 3.5);
-    reverbWet = ctx.createGain(); reverbWet.gain.value = params.reverb.v;
+    reverbNode = c.createConvolver();
+    reverbNode.buffer = makeImpulse(c, 2.2, 3.5);
+    reverbWet = c.createGain(); reverbWet.gain.value = params.reverb.v;
 
-    dryGain = ctx.createGain(); dryGain.gain.value = 0.9;
-    master = ctx.createGain(); master.gain.value = 0.5;
-    analyser = ctx.createAnalyser(); analyser.fftSize = 1024;
+    dryGain = c.createGain(); dryGain.gain.value = 0.9;
+    master = c.createGain(); master.gain.value = 0.5;
+    analyser = c.createAnalyser(); analyser.fftSize = 1024;
 
     // drive stage: voices → pre-gain → waveshaper → post-gain → filter
-    voiceBus = ctx.createGain(); voiceBus.gain.value = 1.0;
-    drivePre = ctx.createGain();
-    shaper = ctx.createWaveShaper();
+    voiceBus = c.createGain(); voiceBus.gain.value = 1.0;
+    drivePre = c.createGain();
+    shaper = c.createWaveShaper();
     const curve = new Float32Array(1024);
     for (let i = 0; i < 1024; i++) {
       const x = i / 511.5 - 1;
@@ -659,7 +678,7 @@
     }
     shaper.curve = curve;
     shaper.oversample = '2x';
-    drivePost = ctx.createGain();
+    drivePost = c.createGain();
     voiceBus.connect(drivePre);
     drivePre.connect(shaper);
     shaper.connect(drivePost);
@@ -667,15 +686,15 @@
     setDrive(params.drive.v);
 
     // shared vibrato LFO — feeds each oscillator's detune (in cents)
-    lfo = ctx.createOscillator();
+    lfo = c.createOscillator();
     lfo.frequency.value = lfoHz(params.lfoRate.v);
-    lfoGain = ctx.createGain();
+    lfoGain = c.createGain();
     lfoGain.gain.value = params.lfoDepth.v * 60;
     lfo.connect(lfoGain);
     lfo.start();
 
     // master limiter: stacked oscillators + drums stay clean
-    limiter = ctx.createDynamicsCompressor();
+    limiter = c.createDynamicsCompressor();
     limiter.threshold.value = -6;
     limiter.knee.value = 6;
     limiter.ratio.value = 12;
@@ -694,20 +713,20 @@
     reverbWet.connect(master);
     master.connect(limiter);
     limiter.connect(analyser);
-    analyser.connect(ctx.destination);
+    analyser.connect(c.destination);
 
-    drumBus = ctx.createGain(); drumBus.gain.value = 0.85;
+    drumBus = c.createGain(); drumBus.gain.value = 0.85;
     drumBus.connect(master);
-    drumVerbSend = ctx.createGain(); drumVerbSend.gain.value = 0.12;
+    drumVerbSend = c.createGain(); drumVerbSend.gain.value = 0.12;
     drumBus.connect(drumVerbSend);
     drumVerbSend.connect(reverbNode);
 
-    bassBus = ctx.createGain(); bassBus.gain.value = 0.8;
+    bassBus = c.createGain(); bassBus.gain.value = 0.8;
     bassBus.connect(master);
 
     // mixer channels: one gain per drum track; bass + synth reuse their buses
     ['Kick', 'Snare', 'Clap', 'CHat', 'OHat'].forEach(id => {
-      const g = ctx.createGain();
+      const g = c.createGain();
       g.connect(drumBus);
       chanNodes[id] = g;
     });
@@ -715,7 +734,13 @@
     chanNodes.Syn = voiceBus;
     applyMix();
 
-    noiseBuf = makeNoise(ctx);
+    noiseBuf = makeNoise(c);
+  }
+
+  function initAudio() {
+    if (ctx) return;
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    buildAudioGraph(ctx);
     drawScope();
   }
 
@@ -862,11 +887,13 @@
   // scheduled synth note for the melody track — uses the current patch
   function playSynthNote(t, midi, dur) {
     const det = params.detune.v * 30;
+    const freq = noteFreq(midi);
     const oscs = [-1, 1].map(sign => {
+      if (currentWave === 'sample' && sampleBuffer) return makeSampleSource(freq, sign * det);
       const o = ctx.createOscillator();
       o.type = currentWave;
       o.detune.value = sign * det;
-      o.frequency.value = noteFreq(midi);
+      o.frequency.value = freq;
       return o;
     });
     const g = ctx.createGain();
@@ -916,11 +943,16 @@
 
   function stepDur() { return 60 / bpm / 4; }
 
-  function scheduleStep(step, t) {
+  // fires the sounds for one step — shared by the live scheduler and the
+  // offline WAV renderer, which doesn't want the UI/recording bookkeeping below
+  function triggerStep(step, t) {
     const vel = accentPattern[step] ? 1.35 : 1;
     drumPattern.forEach((row, ti) => { if (row[step]) DRUMS[ti].play(t, vel); });
     if (bassPattern[step] >= 0) playBass(t, SCALE[bassPattern[step]], vel);
     if (melodyPattern[step] >= 0) playSynthNote(t, melodyPattern[step], stepDur() * 0.92);
+  }
+  function scheduleStep(step, t) {
+    triggerStep(step, t);
     stepTimesRing.push({ step, time: t });
     if (stepTimesRing.length > 48) stepTimesRing.shift();
     uiStepQueue.push({ step, time: t });
@@ -1528,6 +1560,112 @@
     importFile.value = ''; // allow re-importing the same filename later
   });
 
+  // ---------------- audio export (WAV) ----------------
+  // encodes a rendered AudioBuffer as 16-bit PCM WAV — no external library needed
+  function audioBufferToWavBlob(buffer) {
+    const numCh = buffer.numberOfChannels;
+    const sr = buffer.sampleRate;
+    const frames = buffer.length;
+    const blockAlign = numCh * 2;
+    const dataSize = frames * blockAlign;
+    const ab = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(ab);
+    const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, numCh, true);
+    view.setUint32(24, sr, true);
+    view.setUint32(28, sr * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true); // bits per sample
+    writeStr(36, 'data');
+    view.setUint32(40, dataSize, true);
+    const chData = [];
+    for (let ch = 0; ch < numCh; ch++) chData.push(buffer.getChannelData(ch));
+    let off = 44;
+    for (let i = 0; i < frames; i++) {
+      for (let ch = 0; ch < numCh; ch++) {
+        let s = Math.max(-1, Math.min(1, chData[ch][i]));
+        s = s < 0 ? s * 0x8000 : s * 0x7fff;
+        view.setInt16(off, s, true);
+        off += 2;
+      }
+    }
+    return new Blob([ab], { type: 'audio/wav' });
+  }
+
+  const WAV_EXPORT_BARS = 4;
+  const exportWavBtn = document.getElementById('exportWavBtn');
+
+  async function exportWav() {
+    if (exportWavBtn.disabled) return;
+    exportWavBtn.disabled = true;
+    const prevLabel = exportWavBtn.textContent;
+    exportWavBtn.textContent = '…RENDERING';
+    try {
+      // lay out every step's trigger time up front, honoring swing
+      const stepEvents = [];
+      let dur = 0;
+      for (let bar = 0; bar < WAV_EXPORT_BARS; bar++) {
+        for (let step = 0; step < STEPS; step++) {
+          stepEvents.push({ step, time: dur });
+          let d = stepDur();
+          d *= step % 2 === 0 ? (1 + swing) : (1 - swing);
+          dur += d;
+        }
+      }
+      const tail = 2.5; // let reverb/delay/release ring out past the last step
+      const sr = ctx ? ctx.sampleRate : 44100;
+      const OfflineCtor = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      const offlineCtx = new OfflineCtor(2, Math.ceil((dur + tail) * sr), sr);
+
+      // swap the live graph out for an offline one, render, then restore it —
+      // buildAudioGraph() assigns onto these same shared variables
+      const saved = {
+        ctx, filter, delayNode, delayFeedback, delayWet, reverbNode, reverbWet,
+        dryGain, master, analyser, drumBus, drumVerbSend, bassBus, noiseBuf,
+        voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain,
+        chanNodes: { ...chanNodes },
+      };
+
+      ctx = offlineCtx;
+      buildAudioGraph(offlineCtx);
+      stepEvents.forEach(({ step, time }) => triggerStep(step, time));
+
+      const rendered = await offlineCtx.startRendering();
+
+      ({ ctx, filter, delayNode, delayFeedback, delayWet, reverbNode, reverbWet,
+        dryGain, master, analyser, drumBus, drumVerbSend, bassBus, noiseBuf,
+        voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain } = saved);
+      Object.assign(chanNodes, saved.chanNodes);
+
+      const blob = audioBufferToWavBlob(rendered);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+      a.href = url;
+      a.download = `ps1-groove-${stamp}.wav`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast('WAV exported');
+    } catch (err) {
+      toast('Could not render audio');
+    } finally {
+      exportWavBtn.disabled = false;
+      exportWavBtn.textContent = prevLabel;
+    }
+  }
+  exportWavBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    exportWav();
+  });
+
   // ---------------- tabs ----------------
   document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('pointerdown', () => {
@@ -1543,7 +1681,24 @@
   let octave = 4;
   const voices = new Map();
 
+  // imported-audio oscillator: treats the file as a single-cycle waveform,
+  // looped and pitched like any other oscillator. Assumes the file's
+  // natural pitch center is C4 (MIDI 60) — the common convention for
+  // wavetable/instrument samples.
+  let sampleBuffer = null;
+  let sampleName = '';
+  const SAMPLE_ROOT_MIDI = 60;
+
   function noteFreq(midi) { return 440 * Math.pow(2, (midi - 69) / 12); }
+
+  function makeSampleSource(freq, detuneCents) {
+    const src = ctx.createBufferSource();
+    src.buffer = sampleBuffer;
+    src.loop = true;
+    src.playbackRate.value = freq / noteFreq(SAMPLE_ROOT_MIDI);
+    src.detune.value = detuneCents;
+    return src;
+  }
 
   let lastFreq = null;
 
@@ -1555,8 +1710,13 @@
     const gl = glideSec(params.glide.v);
     const now = ctx.currentTime;
 
-    // two oscillators, detuned apart for width
+    // two oscillators (or sample sources), detuned apart for width
     const oscs = [-1, 1].map(sign => {
+      if (currentWave === 'sample' && sampleBuffer) {
+        const src = makeSampleSource(freq, sign * det);
+        lfoGain.connect(src.detune); // vibrato rides on top of base detune
+        return src;
+      }
       const o = ctx.createOscillator();
       o.type = currentWave;
       o.detune.value = sign * det;
@@ -1709,14 +1869,50 @@
 
   // ---------------- wave buttons ----------------
   const patchName = document.getElementById('patchName');
-  document.querySelectorAll('.wave-btn').forEach(btn => {
-    btn.addEventListener('pointerdown', () => {
-      document.querySelectorAll('.wave-btn').forEach(b => b.classList.remove('on'));
-      btn.classList.add('on');
-      currentWave = btn.dataset.wave;
-      patchName.textContent = btn.dataset.name;
+  const sampleWaveBtn = document.getElementById('sampleWaveBtn');
+  const sampleFile = document.getElementById('sampleFile');
+
+  function selectWave(btn) {
+    document.querySelectorAll('.wave-btn').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    currentWave = btn.dataset.wave;
+    patchName.textContent = btn.dataset.name;
+    // AudioBufferSourceNode has no .type — only re-type live oscillator voices
+    if (currentWave !== 'sample') {
       voices.forEach(v => v.oscs.forEach(o => { o.type = currentWave; }));
-    });
+    }
+  }
+
+  document.querySelectorAll('.wave-btn').forEach(btn => {
+    if (btn === sampleWaveBtn) return;
+    btn.addEventListener('pointerdown', () => selectWave(btn));
+  });
+
+  async function loadSampleFile(file) {
+    unlock(); // ensures ctx exists before decodeAudioData
+    try {
+      const arrayBuf = await file.arrayBuffer();
+      sampleBuffer = await ctx.decodeAudioData(arrayBuf);
+      sampleName = file.name;
+      selectWave(sampleWaveBtn);
+      toast('Sample loaded: ' + sampleName);
+    } catch (err) {
+      toast('Could not read that audio file');
+    }
+  }
+  sampleWaveBtn.addEventListener('pointerdown', () => {
+    unlock();
+    // no sample yet, or already active: (re)open the picker to load/swap it
+    if (!sampleBuffer || sampleWaveBtn.classList.contains('on')) {
+      sampleFile.click();
+    } else {
+      selectWave(sampleWaveBtn);
+    }
+  });
+  sampleFile.addEventListener('change', () => {
+    const file = sampleFile.files && sampleFile.files[0];
+    if (file) loadSampleFile(file);
+    sampleFile.value = ''; // allow re-picking the same filename later
   });
 
   // ---------------- octave ----------------
