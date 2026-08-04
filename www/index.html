@@ -161,7 +161,7 @@
 
   .row-label { font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.5; margin: 10px 2px 5px; flex-shrink: 0; }
 
-  .waves { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .waves { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
   .wave-btn {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
@@ -199,7 +199,7 @@
     touch-action: none;
   }
   .fine-btn:active { transform: translateY(1px); box-shadow: none; }
-  .bank-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px; }
+  .bank-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
   .bank {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
@@ -244,6 +244,7 @@
   }
   .wkey.held { background: var(--key-active); }
   .bkey.held { background: var(--accent); }
+  .bkey.inert { opacity: 0.35; }
 
   /* ---------- sequencer ---------- */
   .transport { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-shrink: 0; }
@@ -286,6 +287,15 @@
   .swing-row input[type=range] { flex: 1; accent-color: var(--accent); }
   .swing-row .kname { font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.6; }
   .swing-row .kval { font-size: 10px; font-weight: 600; color: var(--accent); width: 36px; text-align: right; }
+  .swing-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 8px; }
+  .chip {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+    padding: 6px 0; border: none; border-radius: 6px;
+    background: var(--casing-deep); color: var(--ink);
+    opacity: 0.7;
+  }
+  .chip.on { background: var(--accent); color: #fff; opacity: 1; }
 
   .patterns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; flex-shrink: 0; }
   .pat-btn {
@@ -329,6 +339,7 @@
   }
   .io-btn:active { transform: translateY(1px); box-shadow: 0 1px 0 rgba(0,0,0,0.2); }
   .io-btn:disabled { opacity: 0.5; }
+  .io-btn.rec-armed { background: #D8322F; color: #fff; animation: pulse 0.7s infinite alternate; }
   .io-row.single { grid-template-columns: 1fr; }
 
   .rec-btn {
@@ -416,14 +427,21 @@
       <button class="wave-btn" data-wave="sample" data-name="SAMPLE" id="sampleWaveBtn">
         <svg viewBox="0 0 26 12"><path d="M2 9 V3 M8 11 V1 M13 9 V3 M18 11 V1 M24 9 V3"/></svg>SMP
       </button>
+      <button class="wave-btn" data-wave="chop" data-name="CHOP" id="chopWaveBtn">
+        <svg viewBox="0 0 26 12"><path d="M4 11 V1 M9 11 V1 M14 11 V1 M19 11 V1"/></svg>CHOP
+      </button>
     </div>
     <input type="file" id="sampleFile" accept="audio/*" hidden>
+    <div class="io-row single">
+      <button class="io-btn" id="recSampleBtn">🎙 RECORD SAMPLE</button>
+    </div>
 
     <div class="row-label">Controls</div>
     <div class="bank-tabs">
       <button class="bank on" data-bank="main">MAIN</button>
       <button class="bank" data-bank="env">ENV</button>
       <button class="bank" data-bank="osc">OSC</button>
+      <button class="bank" data-bank="lofi">LOFI</button>
     </div>
     <div class="knobs">
       <div class="knob-unit" data-slot="0">
@@ -502,6 +520,18 @@
       <span class="kval" id="swingVal">0%</span>
     </div>
 
+    <div class="row-label">Groove · tap a feel, or drag Swing to taste</div>
+    <div class="swing-chips">
+      <button class="chip on" data-swing="0">STR8</button>
+      <button class="chip" data-swing="8">54</button>
+      <button class="chip" data-swing="16">58</button>
+      <button class="chip" data-swing="24">62</button>
+      <button class="chip" data-swing="32">66</button>
+    </div>
+    <div class="io-row single">
+      <button class="io-btn" id="mutateBtn">🎲 MUTATE</button>
+    </div>
+
     <div class="row-label">Mixer · tap name = mute · hold = solo</div>
     <div class="mixer" id="mixer"></div>
 
@@ -546,14 +576,22 @@
 <div class="overlay" id="helpOverlay">
   <h2>Keys</h2>
   Slide your finger across keys to glide · multi-touch works ·
-  <b>MAIN / ENV / OSC</b> switch knob banks · drag knobs up/down, or tap <b>− +</b> for fine steps ·
+  <b>MAIN / ENV / OSC / LOFI</b> switch knob banks · drag knobs up/down, or tap <b>− +</b> for fine steps ·
   <b>▶</b> and <b>●</b> under the octave buttons run the beat and arm recording from here ·
-  <b>SMP</b> loads your own audio file as the oscillator's waveform — tap it again while active to swap files.
+  <b>SMP</b> loads your own audio file as the oscillator's waveform — tap it again while active to swap files ·
+  <b>🎙 RECORD SAMPLE</b> records straight from your mic instead (up to 8s) and uses it the same way ·
+  <b>LOFI</b> bank: <b>Crackle</b> adds a vinyl noise bed, <b>Wow</b> is tape pitch wobble,
+  <b>Crush</b> is bitcrush grit, <b>Duck</b> pumps the mix on every kick — all start at 0%,
+  turn one up to hear it ·
+  <b>CHOP</b> slices the same sample into 7 one-shot pads across the white keys instead of
+  pitching it — black keys are inert, and octave doesn't change anything in this mode.
 
   <h2>Beats</h2>
   Tap drum cells to toggle, drag to paint · <b>Bass</b> cells cycle through notes with each tap ·
   <b>Mel</b> shows recorded melody notes — tap one to erase it ·
-  <b>Acc</b> steps make all drums hit harder.
+  <b>Acc</b> steps make all drums hit harder ·
+  the swing chips (<b>STR8 / 54 / 58 / 62 / 66</b>) jump to classic hardware-sampler swing feels ·
+  <b>🎲 MUTATE</b> lightly varies the current drum pattern instead of replacing it.
 
   <h2>Recording</h2>
   Press <b>▶ PLAY</b>, arm <b>● REC</b>, then play the keys — every note snaps to the grid
@@ -603,6 +641,10 @@
   let filter, delayNode, delayFeedback, delayWet, reverbNode, reverbWet, dryGain, master, analyser;
   let drumBus, drumVerbSend, bassBus, noiseBuf;
   let voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain;
+  // lofi stage: master → duckGain → crush (dry/wet) → wow/flutter delay → limiter
+  let duckGain, crushShaper, crushDry, crushWet;
+  let wowDelay, wowLfo, wowLfoGain, flutterLfo, flutterLfoGain;
+  let crackleBuf, crackleSrc, crackleFilt1, crackleFilt2, crackleGain;
 
   const cutoffHz  = p => 120 * Math.pow(80, p);
   const releaseSec = p => 0.05 + p * p * 2.5;
@@ -624,6 +666,10 @@
     glide:   { v: 0.00, fmt: p => Math.round(glideSec(p) * 1000) + 'ms' },
     lfoRate: { v: 0.40, fmt: p => lfoHz(p).toFixed(1) + ' Hz' },
     lfoDepth:{ v: 0.00, fmt: p => Math.round(p * 60) + ' ct' },
+    crackle: { v: 0.00, fmt: p => Math.round(p * 100) + '%' },
+    wow:     { v: 0.00, fmt: p => Math.round(p * 100) + '%' },
+    crush:   { v: 0.00, fmt: p => Math.round(p * 100) + '%' },
+    duck:    { v: 0.00, fmt: p => Math.round(p * 100) + '%' },
   };
 
   function makeImpulse(c, seconds, decay) {
@@ -640,6 +686,19 @@
     const buf = c.createBuffer(1, len, c.sampleRate);
     const d = buf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+  // vinyl-style bed: soft continuous hiss with sparse louder pop transients,
+  // looped — shaped further downstream by a highpass/lowpass pair
+  function makeCrackle(c) {
+    const len = c.sampleRate * 3;
+    const buf = c.createBuffer(1, len, c.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      let s = (Math.random() * 2 - 1) * 0.05;
+      if (Math.random() < 0.0006) s += (Math.random() * 2 - 1) * 0.6;
+      d[i] = s;
+    }
     return buf;
   }
 
@@ -711,7 +770,47 @@
     dryGain.connect(master);
     delayWet.connect(master);
     reverbWet.connect(master);
-    master.connect(limiter);
+
+    // lofi stage: master → duck (sidechain pump) → crush (dry/wet) → wow/flutter (tape wobble) → limiter
+    duckGain = c.createGain(); duckGain.gain.value = 1;
+    master.connect(duckGain);
+
+    crushShaper = c.createWaveShaper();
+    const crushCurve = new Float32Array(256);
+    for (let i = 0; i < 256; i++) {
+      const x = i / 127.5 - 1;
+      crushCurve[i] = Math.round(x * 8) / 8; // stair-step quantize — the digital crunch
+    }
+    crushShaper.curve = crushCurve; // no oversample: the harsh edges are the point
+    crushDry = c.createGain(); crushDry.gain.value = 1 - params.crush.v * 0.8;
+    crushWet = c.createGain(); crushWet.gain.value = params.crush.v * 0.9;
+    duckGain.connect(crushDry);
+    duckGain.connect(crushShaper);
+    crushShaper.connect(crushWet);
+
+    wowDelay = c.createDelay(0.02);
+    wowDelay.delayTime.value = 0.004;
+    crushDry.connect(wowDelay);
+    crushWet.connect(wowDelay);
+
+    // two LFOs modulating the same delay's time = tape wow (slow) + flutter (fast)
+    wowLfo = c.createOscillator();
+    wowLfo.frequency.value = 0.4;
+    wowLfoGain = c.createGain();
+    wowLfoGain.gain.value = params.wow.v * 0.0025;
+    wowLfo.connect(wowLfoGain);
+    wowLfoGain.connect(wowDelay.delayTime);
+    wowLfo.start();
+
+    flutterLfo = c.createOscillator();
+    flutterLfo.frequency.value = 6;
+    flutterLfoGain = c.createGain();
+    flutterLfoGain.gain.value = params.wow.v * 0.0006;
+    flutterLfo.connect(flutterLfoGain);
+    flutterLfoGain.connect(wowDelay.delayTime);
+    flutterLfo.start();
+
+    wowDelay.connect(limiter);
     limiter.connect(analyser);
     analyser.connect(c.destination);
 
@@ -735,6 +834,21 @@
     applyMix();
 
     noiseBuf = makeNoise(c);
+
+    // vinyl crackle bed — always running, silent until the Crackle knob is
+    // raised; feeds into duckGain so it audibly pumps with the kick
+    crackleBuf = makeCrackle(c);
+    crackleSrc = c.createBufferSource();
+    crackleSrc.buffer = crackleBuf;
+    crackleSrc.loop = true;
+    crackleFilt1 = c.createBiquadFilter(); crackleFilt1.type = 'highpass'; crackleFilt1.frequency.value = 600;
+    crackleFilt2 = c.createBiquadFilter(); crackleFilt2.type = 'lowpass'; crackleFilt2.frequency.value = 5000;
+    crackleGain = c.createGain(); crackleGain.gain.value = params.crackle.v * 0.12;
+    crackleSrc.connect(crackleFilt1);
+    crackleFilt1.connect(crackleFilt2);
+    crackleFilt2.connect(crackleGain);
+    crackleGain.connect(duckGain);
+    crackleSrc.start();
   }
 
   function initAudio() {
@@ -781,11 +895,11 @@
   // ---------------- toast + help ----------------
   const toastEl = document.getElementById('toast');
   let toastT = null;
-  function toast(msg) {
+  function toast(msg, duration = 1500) {
     toastEl.textContent = msg;
     toastEl.classList.add('show');
     clearTimeout(toastT);
-    toastT = setTimeout(() => toastEl.classList.remove('show'), 1500);
+    toastT = setTimeout(() => toastEl.classList.remove('show'), duration);
   }
   const helpOverlay = document.getElementById('helpOverlay');
   document.getElementById('helpBtn').addEventListener('pointerdown', e => {
@@ -806,6 +920,13 @@
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
     osc.connect(g); g.connect(chanNodes.Kick);
     osc.start(t); osc.stop(t + 0.35);
+    // sidechain "pump" — kick ducks the whole post-master mix, itself included
+    if (params.duck.v > 0.01) {
+      duckGain.gain.cancelScheduledValues(t);
+      duckGain.gain.setValueAtTime(1, t);
+      duckGain.gain.linearRampToValueAtTime(1 - params.duck.v * 0.85, t + 0.02);
+      duckGain.gain.setTargetAtTime(1, t + 0.02, 0.05);
+    }
   }
   function playSnare(t, vel = 1) {
     const n = ctx.createBufferSource(); n.buffer = noiseBuf;
@@ -886,6 +1007,7 @@
   }
   // scheduled synth note for the melody track — uses the current patch
   function playSynthNote(t, midi, dur) {
+    if (currentWave === 'chop') { if (sampleBuffer) playChopStep(t, midi); return; }
     const det = params.detune.v * 30;
     const freq = noteFreq(midi);
     const oscs = [-1, 1].map(sign => {
@@ -1192,12 +1314,21 @@
 
   const swingEl = document.getElementById('swing');
   const swingVal = document.getElementById('swingVal');
+  const swingChips = document.querySelectorAll('.chip');
   function setSwing(v) {
     swing = v / 100;
     swingEl.value = v;
     swingVal.textContent = v + '%';
+    swingChips.forEach(c => c.classList.toggle('on', +c.dataset.swing === v));
   }
   swingEl.addEventListener('input', () => setSwing(+swingEl.value));
+  swingChips.forEach(chip => {
+    chip.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      unlock();
+      setSwing(+chip.dataset.swing);
+    });
+  });
 
   // ---------------- record arm ----------------
   let recArmed = false;
@@ -1454,6 +1585,35 @@
     });
   });
 
+  // ---------------- mutate ----------------
+  // lightly varies the current pattern in place — flips each drum/accent step
+  // independently at a small per-track probability, so a loop evolves instead
+  // of being replaced outright (unlike Starter Grooves). Bass/melody untouched.
+  const MUTATE_PROB = { Kick: 0.06, Snare: 0.06, Clap: 0.05, CHat: 0.12, OHat: 0.10 };
+  function mutatePattern() {
+    DRUMS.forEach((trk, ti) => {
+      const prob = MUTATE_PROB[trk.name] ?? 0.08;
+      for (let s = 0; s < STEPS; s++) {
+        if (Math.random() < prob) {
+          drumPattern[ti][s] = !drumPattern[ti][s];
+          drumCells[ti][s].classList.toggle('on', drumPattern[ti][s]);
+        }
+      }
+    });
+    for (let s = 0; s < STEPS; s++) {
+      if (Math.random() < 0.08) {
+        accentPattern[s] = !accentPattern[s];
+        accCells[s].classList.toggle('on', accentPattern[s]);
+      }
+    }
+    toast('Mutated');
+  }
+  document.getElementById('mutateBtn').addEventListener('pointerdown', e => {
+    e.preventDefault();
+    unlock();
+    mutatePattern();
+  });
+
   // ---------------- save slots ----------------
   const STORE_KEY = 'ps1-slots';
   let slots = {};            // in-memory copy
@@ -1629,6 +1789,9 @@
         ctx, filter, delayNode, delayFeedback, delayWet, reverbNode, reverbWet,
         dryGain, master, analyser, drumBus, drumVerbSend, bassBus, noiseBuf,
         voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain,
+        duckGain, crushShaper, crushDry, crushWet,
+        wowDelay, wowLfo, wowLfoGain, flutterLfo, flutterLfoGain,
+        crackleBuf, crackleSrc, crackleFilt1, crackleFilt2, crackleGain,
         chanNodes: { ...chanNodes },
       };
 
@@ -1640,7 +1803,10 @@
 
       ({ ctx, filter, delayNode, delayFeedback, delayWet, reverbNode, reverbWet,
         dryGain, master, analyser, drumBus, drumVerbSend, bassBus, noiseBuf,
-        voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain } = saved);
+        voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain,
+        duckGain, crushShaper, crushDry, crushWet,
+        wowDelay, wowLfo, wowLfoGain, flutterLfo, flutterLfoGain,
+        crackleBuf, crackleSrc, crackleFilt1, crackleFilt2, crackleGain } = saved);
       Object.assign(chanNodes, saved.chanNodes);
 
       const blob = audioBufferToWavBlob(rendered);
@@ -1689,13 +1855,54 @@
   let sampleName = '';
   const SAMPLE_ROOT_MIDI = 60;
 
+  // chop mode: the same sampleBuffer sliced into 7 one-shot pieces, one per
+  // white-key pitch class (C D E F G A B) — the SP-1200/MPC chop workflow,
+  // as opposed to SMP's pitched wavetable use of the same recording. Keyed
+  // by pitch class (midi % 12) rather than key position so it works
+  // identically for a live keyEl.dataset.semi or a replayed midi number.
+  // undefined for black-key semitones (inert) — safe against negative
+  // modulo too, since octave is clamped to [1,7] everywhere it's set, so
+  // midi here is always non-negative.
+  const CHOP_SLICES = 7;
+  const CHOP_SEMI_TO_SLICE = { 0: 0, 2: 1, 4: 2, 5: 3, 7: 4, 9: 5, 11: 6 };
+  function chopSliceIndex(semiOrMidi) { return CHOP_SEMI_TO_SLICE[semiOrMidi % 12]; }
+  // sequencer's one-shot chop trigger — unlike the live-keyboard voice, no
+  // later stopVoice call comes to release this, so it carries its own full
+  // envelope and plays through the slice's natural length regardless of
+  // the step's grid duration, same as a real sampler pad would
+  function playChopStep(t, midi) {
+    const idx = chopSliceIndex(midi);
+    if (idx === undefined) return;
+    const sliceDur = sampleBuffer.duration / CHOP_SLICES;
+    const src = ctx.createBufferSource();
+    src.buffer = sampleBuffer;
+    src.start(t, idx * sliceDur, sliceDur);
+    const g = ctx.createGain();
+    const atk = Math.min(attackSec(params.attack.v), sliceDur * 0.5);
+    const rel = Math.min(releaseSec(params.release.v), 0.5);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.32, t + atk);
+    g.gain.setTargetAtTime(0.32 * params.sustain.v, t + atk, decaySec(params.decay.v) / 3);
+    g.gain.setTargetAtTime(0.0001, t + sliceDur, rel / 3);
+    src.connect(g); g.connect(voiceBus);
+    src.stop(t + sliceDur + rel + 0.1);
+  }
+
   function noteFreq(midi) { return 440 * Math.pow(2, (midi - 69) / 12); }
 
-  function makeSampleSource(freq, detuneCents) {
+  function makeSampleSource(freq, detuneCents, glideFromFreq = null, glideTime = 0, now = 0) {
     const src = ctx.createBufferSource();
     src.buffer = sampleBuffer;
     src.loop = true;
-    src.playbackRate.value = freq / noteFreq(SAMPLE_ROOT_MIDI);
+    const targetRate = freq / noteFreq(SAMPLE_ROOT_MIDI);
+    // playbackRate is the sample-source equivalent of an oscillator's
+    // frequency, so glide ramps it the same way frequency ramps above
+    if (glideTime > 0 && glideFromFreq) {
+      src.playbackRate.setValueAtTime(glideFromFreq / noteFreq(SAMPLE_ROOT_MIDI), now);
+      src.playbackRate.setTargetAtTime(targetRate, now, glideTime / 3);
+    } else {
+      src.playbackRate.value = targetRate;
+    }
     src.detune.value = detuneCents;
     return src;
   }
@@ -1705,6 +1912,36 @@
   function startVoice(id, midi, keyEl) {
     if (!ctx) return;
     stopVoice(id, true);
+
+    // chop mode: one-shot slice registered into `voices` like any other
+    // voice, so stopVoice's release fade and the pointermove slide-to-
+    // retrigger logic both just work with zero changes to either — unconditional
+    // return either way, so chop never falls into the oscillator path below
+    if (currentWave === 'chop') {
+      if (sampleBuffer) {
+        const idx = chopSliceIndex(midi);
+        if (idx !== undefined) {
+          const now = ctx.currentTime;
+          const sliceDur = sampleBuffer.duration / CHOP_SLICES;
+          const src = ctx.createBufferSource();
+          src.buffer = sampleBuffer;
+          src.start(now, idx * sliceDur, sliceDur);
+          src.stop(now + sliceDur + 0.5); // safety stop past natural end
+          const g = ctx.createGain();
+          const atk = Math.min(attackSec(params.attack.v), sliceDur * 0.5);
+          g.gain.setValueAtTime(0, now);
+          g.gain.linearRampToValueAtTime(0.32, now + atk);
+          g.gain.setTargetAtTime(0.32 * params.sustain.v, now + atk, decaySec(params.decay.v) / 3);
+          src.connect(g); g.connect(voiceBus);
+          voices.set(id, { oscs: [src], gain: g, keyEl, midi });
+          keyEl.classList.add('held');
+          keyEl.dataset.holds = (parseInt(keyEl.dataset.holds || 0) + 1);
+          noteReadout.textContent = 'PAD ' + (idx + 1);
+        }
+      }
+      return;
+    }
+
     const freq = noteFreq(midi);
     const det = params.detune.v * 30;
     const gl = glideSec(params.glide.v);
@@ -1713,7 +1950,7 @@
     // two oscillators (or sample sources), detuned apart for width
     const oscs = [-1, 1].map(sign => {
       if (currentWave === 'sample' && sampleBuffer) {
-        const src = makeSampleSource(freq, sign * det);
+        const src = makeSampleSource(freq, sign * det, lastFreq, gl, now);
         lfoGain.connect(src.detune); // vibrato rides on top of base detune
         return src;
       }
@@ -1870,7 +2107,11 @@
   // ---------------- wave buttons ----------------
   const patchName = document.getElementById('patchName');
   const sampleWaveBtn = document.getElementById('sampleWaveBtn');
+  const chopWaveBtn = document.getElementById('chopWaveBtn');
   const sampleFile = document.getElementById('sampleFile');
+  // remembers which button (SMP or CHOP) opened the file picker, so a
+  // loaded/recorded file lands on whichever one the user actually tapped
+  let sampleTargetBtn = sampleWaveBtn;
 
   function selectWave(btn) {
     document.querySelectorAll('.wave-btn').forEach(b => b.classList.remove('on'));
@@ -1878,23 +2119,33 @@
     currentWave = btn.dataset.wave;
     patchName.textContent = btn.dataset.name;
     // AudioBufferSourceNode has no .type — only re-type live oscillator voices
-    if (currentWave !== 'sample') {
+    if (currentWave !== 'sample' && currentWave !== 'chop') {
       voices.forEach(v => v.oscs.forEach(o => { o.type = currentWave; }));
     }
+    // chop mode repurposes the keyboard as 7 numbered pads (white keys only)
+    const chop = currentWave === 'chop';
+    [...keyboard.children].forEach((k, i) => {
+      if (k.classList.contains('wkey')) {
+        k.textContent = chop ? String(chopSliceIndex(+k.dataset.semi) + 1) : k.dataset.label;
+      } else if (k.classList.contains('bkey')) {
+        k.classList.toggle('inert', chop);
+      }
+    });
   }
 
   document.querySelectorAll('.wave-btn').forEach(btn => {
-    if (btn === sampleWaveBtn) return;
+    if (btn === sampleWaveBtn || btn === chopWaveBtn) return;
     btn.addEventListener('pointerdown', () => selectWave(btn));
   });
 
-  async function loadSampleFile(file) {
+  async function loadSampleFile(file, targetBtn = sampleWaveBtn) {
     unlock(); // ensures ctx exists before decodeAudioData
     try {
       const arrayBuf = await file.arrayBuffer();
-      sampleBuffer = await ctx.decodeAudioData(arrayBuf);
+      sampleBuffer = trimBufferSilence(await ctx.decodeAudioData(arrayBuf));
       sampleName = file.name;
-      selectWave(sampleWaveBtn);
+      selectWave(targetBtn);
+      previewSample(sampleBuffer);
       toast('Sample loaded: ' + sampleName);
     } catch (err) {
       toast('Could not read that audio file');
@@ -1904,15 +2155,207 @@
     unlock();
     // no sample yet, or already active: (re)open the picker to load/swap it
     if (!sampleBuffer || sampleWaveBtn.classList.contains('on')) {
+      sampleTargetBtn = sampleWaveBtn;
       sampleFile.click();
     } else {
       selectWave(sampleWaveBtn);
     }
   });
+  chopWaveBtn.addEventListener('pointerdown', () => {
+    unlock();
+    if (!sampleBuffer || chopWaveBtn.classList.contains('on')) {
+      sampleTargetBtn = chopWaveBtn;
+      sampleFile.click();
+    } else {
+      selectWave(chopWaveBtn);
+    }
+  });
   sampleFile.addEventListener('change', () => {
     const file = sampleFile.files && sampleFile.files[0];
-    if (file) loadSampleFile(file);
+    if (file) loadSampleFile(file, sampleTargetBtn);
     sampleFile.value = ''; // allow re-picking the same filename later
+  });
+
+  // ---------------- mic sample recording ----------------
+  // Records straight from the mic and drops it into the same sampleBuffer
+  // slot as a loaded file, so it plays back exactly like SMP does — looped
+  // and pitched from its assumed center at C4.
+  const recSampleBtn = document.getElementById('recSampleBtn');
+  const MIC_REC_MAX_MS = 8000;
+  // prefer mp4/aac (what Safari actually records) before the webm/opus
+  // options Chrome and Firefox use — asking for an unsupported explicit
+  // type throws, so we only pass one MediaRecorder actually supports
+  const MIC_REC_MIMES = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+  let micStream = null;
+  let mediaRecorder = null;
+  let recChunks = [];
+  let micRecording = false;
+  let recTimerId = null;
+  let recStartedAt = 0;
+
+  function resetRecSampleBtn() {
+    recSampleBtn.textContent = '🎙 RECORD SAMPLE';
+    recSampleBtn.classList.remove('rec-armed');
+  }
+  // the button reverts to its normal look the instant recording stops,
+  // before the async decode even runs — a toast alone is easy to miss on a
+  // small screen, so flash the failure reason directly on the same button
+  // the user is already looking at, then revert after a couple seconds
+  function flashRecFailure(text) {
+    recSampleBtn.textContent = text;
+    recSampleBtn.classList.add('rec-armed');
+    setTimeout(() => {
+      if (!micRecording) resetRecSampleBtn();
+    }, 2200);
+  }
+  function pickRecorderMime() {
+    if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
+    return MIC_REC_MIMES.find(m => MediaRecorder.isTypeSupported(m)) || '';
+  }
+  // mic recordings are typically much quieter than a mastered sample file —
+  // scan for the loudest sample and boost toward a usable level so a normal
+  // speaking voice isn't inaudible once it hits the synth's voice envelope
+  function normalizeRecordedBuffer(buffer) {
+    let peak = 0;
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      const d = buffer.getChannelData(ch);
+      for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
+    }
+    if (peak > 0 && peak < 0.85) {
+      const boost = Math.min(0.85 / peak, 12); // cap so a near-silent take doesn't become pure hiss
+      for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+        const d = buffer.getChannelData(ch);
+        for (let i = 0; i < d.length; i++) d[i] *= boost;
+      }
+    }
+    return peak;
+  }
+  // mic recordings (and some sample files) often carry a beat of near-silence
+  // at the start — since every trigger always starts from buffer position 0,
+  // and the sequencer's melody track only holds a note for one short step,
+  // that silence is all a quick trigger ever plays. Trimming it means every
+  // trigger, however short, lands on real content.
+  function trimBufferSilence(buffer, threshold = 0.02) {
+    const chans = [];
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) chans.push(buffer.getChannelData(ch));
+    const len = buffer.length;
+    let start = 0;
+    findStart:
+    for (; start < len; start++) {
+      for (let ch = 0; ch < chans.length; ch++) if (Math.abs(chans[ch][start]) > threshold) break findStart;
+    }
+    let end = len - 1;
+    findEnd:
+    for (; end > start; end--) {
+      for (let ch = 0; ch < chans.length; ch++) if (Math.abs(chans[ch][end]) > threshold) break findEnd;
+    }
+    if (end - start < buffer.sampleRate * 0.05) return buffer; // essentially all silence — leave as-is
+    const pad = Math.round(buffer.sampleRate * 0.02); // 20ms headroom so the attack isn't clipped
+    const from = Math.max(0, start - pad);
+    const to = Math.min(len - 1, end + pad);
+    const out = ctx.createBuffer(buffer.numberOfChannels, to - from + 1, buffer.sampleRate);
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      out.getChannelData(ch).set(chans[ch].subarray(from, to + 1));
+    }
+    return out;
+  }
+  // quick one-shot playback right after loading/recording a sample so you
+  // hear it immediately without pressing a key — runs through the same
+  // filter/delay/reverb/drive chain as any other voice
+  function previewSample(buffer) {
+    if (!ctx || !voiceBus) return;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const g = ctx.createGain();
+    g.gain.value = 0.5;
+    src.connect(g);
+    g.connect(voiceBus);
+    src.start();
+  }
+
+  async function startMicRecording() {
+    unlock(); // ensures ctx exists before decodeAudioData in onstop
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+      toast('Mic recording not supported here');
+      return;
+    }
+    // instant feedback — permission/negotiation can take a beat, and without
+    // this the button looks unresponsive the moment it's tapped
+    recSampleBtn.textContent = '● ARMING…';
+    recSampleBtn.classList.add('rec-armed');
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      resetRecSampleBtn();
+      toast('Mic access denied');
+      return;
+    }
+    const mime = pickRecorderMime();
+    try {
+      mediaRecorder = mime ? new MediaRecorder(micStream, { mimeType: mime }) : new MediaRecorder(micStream);
+    } catch (err) {
+      micStream.getTracks().forEach(t => t.stop());
+      micStream = null;
+      resetRecSampleBtn();
+      toast('Mic recording not supported here');
+      return;
+    }
+    recChunks = [];
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recChunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
+      micStream.getTracks().forEach(t => t.stop());
+      micStream = null;
+      if (!recChunks.length) {
+        toast('No audio captured — try again', 3000);
+        flashRecFailure('⚠ NO AUDIO');
+        return;
+      }
+      const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || mime || 'audio/webm' });
+      try {
+        const arrayBuf = await blob.arrayBuffer();
+        const decoded = await ctx.decodeAudioData(arrayBuf);
+        const peak = normalizeRecordedBuffer(decoded);
+        if (peak < 0.002) {
+          // peak this low usually means the mic permission prompt was
+          // granted but the OS itself is still blocking the input (common
+          // on macOS: System Settings > Privacy & Security > Microphone
+          // needs the browser enabled separately from the in-page prompt)
+          toast('Recording was silent (peak ' + peak.toFixed(4) + ') — check mic input', 3500);
+          flashRecFailure('⚠ TOO QUIET');
+          return;
+        }
+        sampleBuffer = trimBufferSilence(decoded);
+        sampleName = 'mic recording';
+        selectWave(sampleWaveBtn);
+        previewSample(sampleBuffer);
+        toast('Recorded ' + sampleBuffer.duration.toFixed(1) + 's — now the oscillator');
+      } catch (err) {
+        toast('Could not use that recording', 3000);
+        flashRecFailure('⚠ FAILED');
+      }
+    };
+    // request a chunk every 250ms in addition to the final one on stop —
+    // some browsers only reliably flush audio data this way
+    mediaRecorder.start(250);
+    micRecording = true;
+    recSampleBtn.classList.add('rec-armed');
+    recStartedAt = Date.now();
+    recTimerId = setInterval(() => {
+      const secs = (Date.now() - recStartedAt) / 1000;
+      recSampleBtn.textContent = '● STOP ' + secs.toFixed(1) + 's';
+      if (secs * 1000 >= MIC_REC_MAX_MS) stopMicRecording();
+    }, 100);
+  }
+  function stopMicRecording() {
+    if (!micRecording) return;
+    micRecording = false;
+    clearInterval(recTimerId);
+    resetRecSampleBtn();
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+  }
+  recSampleBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    micRecording ? stopMicRecording() : startMicRecording();
   });
 
   // ---------------- octave ----------------
@@ -1938,18 +2381,29 @@
     if (name === 'drive')  setDrive(p);
     if (name === 'lfoRate')  lfo.frequency.setTargetAtTime(lfoHz(p), ctx.currentTime, 0.02);
     if (name === 'lfoDepth') lfoGain.gain.setTargetAtTime(p * 60, ctx.currentTime, 0.02);
-    // attack / decay / sustain / release / detune / glide are read at note time
+    if (name === 'crackle') crackleGain.gain.setTargetAtTime(p * 0.12, ctx.currentTime, 0.05);
+    if (name === 'wow') {
+      wowLfoGain.gain.setTargetAtTime(p * 0.0025, ctx.currentTime, 0.05);
+      flutterLfoGain.gain.setTargetAtTime(p * 0.0006, ctx.currentTime, 0.05);
+    }
+    if (name === 'crush') {
+      crushDry.gain.setTargetAtTime(1 - p * 0.8, ctx.currentTime, 0.05);
+      crushWet.gain.setTargetAtTime(p * 0.9, ctx.currentTime, 0.05);
+    }
+    // attack / decay / sustain / release / detune / glide / duck are read at note time
   }
 
   const BANKS = {
     main: ['cutoff', 'delay', 'reverb', 'drive'],
     env:  ['attack', 'decay', 'sustain', 'release'],
     osc:  ['detune', 'glide', 'lfoRate', 'lfoDepth'],
+    lofi: ['crackle', 'wow', 'crush', 'duck'],
   };
   const LABELS = {
     cutoff: 'Filter', delay: 'Delay', reverb: 'Reverb', drive: 'Drive',
     attack: 'Attack', decay: 'Decay', sustain: 'Sustain', release: 'Release',
     detune: 'Detune', glide: 'Glide', lfoRate: 'LFO Rate', lfoDepth: 'LFO Amt',
+    crackle: 'Crackle', wow: 'Wow', crush: 'Crush', duck: 'Duck',
   };
   let currentBank = 'main';
   let knobActive = false;
@@ -2037,6 +2491,13 @@
   sizeScope();
   window.addEventListener('resize', sizeScope);
 
+  // screen warms from synth-green toward the accent orange as Lo-Fi knobs rise
+  function lofiScopeColor() {
+    const t = Math.max(0, Math.min(1, (params.crackle.v + params.wow.v + params.crush.v) / 3));
+    const from = [92, 240, 138], to = [255, 107, 26];
+    const c = from.map((v, i) => Math.round(v + (to[i] - v) * t));
+    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  }
   function drawScope() {
     requestAnimationFrame(drawScope);
     const w = scope.clientWidth, h = scope.clientHeight;
@@ -2049,9 +2510,10 @@
 
     const data = new Uint8Array(analyser.fftSize);
     analyser.getByteTimeDomainData(data);
-    sctx.strokeStyle = '#5CF08A';
+    const scopeColor = lofiScopeColor();
+    sctx.strokeStyle = scopeColor;
     sctx.lineWidth = 2;
-    sctx.shadowColor = '#5CF08A';
+    sctx.shadowColor = scopeColor;
     sctx.shadowBlur = 6;
     sctx.beginPath();
     for (let i = 0; i < data.length; i++) {

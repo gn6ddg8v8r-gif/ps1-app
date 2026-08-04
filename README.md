@@ -67,6 +67,12 @@ Why do this even if the App Store is the goal: it's your free marketing demo.
    **Your synth is now a real app on your phone.** This works even before the
    $99 account (free account = app expires after 7 days).
 
+4. The synth's RECORD SAMPLE button uses the mic (`getUserMedia`), which iOS
+   requires an explanation for. In Xcode, open `ios/App/App/Info.plist` and
+   add a `Privacy - Microphone Usage Description` entry (e.g. "Used to record
+   your voice as a synth sample.") — without it, tapping RECORD SAMPLE will
+   silently fail on-device.
+
 ### Each release after code changes
 
 ```bash
