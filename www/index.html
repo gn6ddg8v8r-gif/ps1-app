@@ -893,6 +893,35 @@
     }
   }
 
+  // ---------------- lock-screen transport (Media Session API) ----------------
+  // surfaces play/pause on the lock screen / Control Center once installed
+  // as a PWA — piggybacks on the silent <audio> element above, which is
+  // what actually keeps the OS treating this as an active media session
+  let setMediaSessionState = () => {}; // no-op until (if) supported
+  let setMediaSessionTempo = () => {}; // no-op until (if) supported
+  if ('mediaSession' in navigator) {
+    const artwork = [
+      { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
+    ];
+    // bpm isn't initialized yet this early in the script, so start with a
+    // static artist line — setMediaSessionTempo (called from setBpm, once
+    // bpm exists) swaps in the live tempo. Reassigning a fresh MediaMetadata
+    // rather than mutating fields in place, since not every browser
+    // reactively picks up in-place edits to an existing instance.
+    navigator.mediaSession.metadata = new MediaMetadata({ title: 'PS-1 Pocket Synth', artist: 'Pocket Groovebox', artwork });
+    const setMediaAction = (action, handler) => {
+      try { navigator.mediaSession.setActionHandler(action, handler); } catch (e) { /* unsupported action */ }
+    };
+    setMediaAction('play', () => startSeq());
+    setMediaAction('pause', () => stopSeq());
+    setMediaAction('stop', () => stopSeq());
+    setMediaSessionState = state => { navigator.mediaSession.playbackState = state; };
+    setMediaSessionTempo = bpmNow => {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: 'PS-1 Pocket Synth', artist: bpmNow + ' BPM', artwork });
+    };
+  }
+
   function unlock() {
     initAudio();
     if (ctx.state === 'suspended') ctx.resume();
@@ -1116,6 +1145,7 @@
     playBtn.classList.add('playing');
     miniPlay.textContent = '■';
     miniPlay.classList.add('playing');
+    setMediaSessionState('playing');
   }
   function stopSeq() {
     playing = false;
@@ -1125,6 +1155,7 @@
     miniPlay.textContent = '▶';
     miniPlay.classList.remove('playing');
     clearPlayhead();
+    setMediaSessionState('paused');
   }
 
   // ---------------- grid UI ----------------
@@ -1312,6 +1343,7 @@
     bpmVal.textContent = bpm;
     bpmReadout.textContent = bpm + ' BPM';
     if (ctx) delayNode.delayTime.setTargetAtTime(60 / bpm * 0.75, ctx.currentTime, 0.05);
+    setMediaSessionTempo(bpm);
   }
   let holdTimer = null;
   function bindHold(btn, delta) {
