@@ -209,6 +209,14 @@
   }
   .bank.on { background: var(--accent); color: #fff; opacity: 1; }
 
+  /* always-visible performance knob (Keys panel) — deliberately bare, no
+     readout/fine-tune, unlike the patch-editing knobs above: this is a
+     "turn it till it sounds right" control, not a precise parameter */
+  .mini-knob-unit { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .mini-kname { font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.5; }
+  .knob.mini { width: 40px; height: 40px; }
+  .knob.mini .pointer { top: 4px; width: 3px; height: 11px; margin-left: -1.5px; transform-origin: 50% 15px; }
+
   .oct-row { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 6px; }
   .oct-btn, .bpm-btn {
     font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 18px;
@@ -483,6 +491,10 @@
     </div>
 
     <div class="oct-row">
+      <div class="mini-knob-unit">
+        <div class="knob mini" id="keysVolKnob"><div class="pointer" id="keysVolPointer"></div></div>
+        <div class="mini-kname">VOL</div>
+      </div>
       <button class="oct-btn" id="octDown">−</button>
       <div class="oct-display">OCT <span id="octVal">4</span></div>
       <button class="oct-btn" id="octUp">+</button>
@@ -578,6 +590,8 @@
   Slide your finger across keys to glide · multi-touch works ·
   <b>MAIN / ENV / OSC / LOFI</b> switch knob banks · drag knobs up/down, or tap <b>− +</b> for fine steps ·
   <b>▶</b> and <b>●</b> under the octave buttons run the beat and arm recording from here ·
+  the small <b>VOL</b> knob next to them is the same level as the SYN fader on the Beats
+  mixer — turn either one and both move ·
   <b>SMP</b> loads your own audio file as the oscillator's waveform — tap it again while active to swap files ·
   <b>🎙 RECORD SAMPLE</b> records straight from your mic instead (up to 8s) and uses it the same way ·
   <b>LOFI</b> bank: <b>Crackle</b> adds a vinyl noise bed, <b>Wow</b> is tape pitch wobble,
@@ -1366,6 +1380,17 @@
   const mixState = {};
   MIX_CHANNELS.forEach(c => { mixState[c.id] = { vol: 0.9, mute: false, solo: false }; });
 
+  // Keys-panel volume knob — a second control surface for the exact same
+  // mixState.Syn.vol the Beats-panel SYN fader already reads/writes, kept
+  // in sync both ways so they never drift apart (matters on the desktop
+  // layout, where both panels are visible side by side at once)
+  const keysVolKnob = document.getElementById('keysVolKnob');
+  const keysVolPointer = document.getElementById('keysVolPointer');
+  let syncSynFader = null; // assigned once the Syn channel's fader is built, below
+  function renderKeysVol() {
+    keysVolPointer.style.transform = `rotate(${-135 + mixState.Syn.vol * 270}deg)`;
+  }
+
   function applyMix() {
     if (!ctx) return;
     const anySolo = MIX_CHANNELS.some(c => mixState[c.id].solo);
@@ -1398,8 +1423,10 @@
       fill.style.height = (mixState[c.id].vol * 100) + '%';
       lbl.classList.toggle('muted', mixState[c.id].mute);
       lbl.classList.toggle('solo', mixState[c.id].solo);
+      if (c.id === 'Syn') renderKeysVol();
     }
     renderChan();
+    if (c.id === 'Syn') syncSynFader = renderChan;
 
     function setFromY(clientY) {
       const r = fader.getBoundingClientRect();
@@ -1452,6 +1479,33 @@
   document.addEventListener('touchmove', e => {
     if (faderActive) e.preventDefault();
   }, { passive: false });
+
+  // Keys-panel volume knob drag — mirrors the bank-knob drag math (a 200px
+  // pull covers the full 0-1 range), writing straight into mixState.Syn.vol
+  // and re-using the Syn fader's own render function so the two controls
+  // never drift apart
+  (function () {
+    let startY = 0, startV = 0;
+    keysVolKnob.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      unlock();
+      knobActive = true;
+      keysVolKnob.setPointerCapture(e.pointerId);
+      startY = e.clientY;
+      startV = mixState.Syn.vol;
+    });
+    keysVolKnob.addEventListener('pointermove', e => {
+      if (!keysVolKnob.hasPointerCapture(e.pointerId)) return;
+      e.preventDefault();
+      const dv = (startY - e.clientY) / 200;
+      mixState.Syn.vol = Math.min(1, Math.max(0, startV + dv));
+      applyMix();
+      syncSynFader();
+    });
+    ['pointerup', 'pointercancel'].forEach(ev =>
+      keysVolKnob.addEventListener(ev, () => { knobActive = false; }));
+  })();
+  renderKeysVol(); // initial pointer position matches the default 90% level
 
   // ---------------- starter patterns ----------------
   const PATTERNS = {
