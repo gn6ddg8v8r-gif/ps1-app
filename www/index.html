@@ -306,6 +306,8 @@
     opacity: 0.7;
   }
   .chip.on { background: var(--accent); color: #fff; opacity: 1; }
+  .voice-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
+  .track.harmony.armed .tname { color: var(--accent); font-weight: 700; }
 
   .patterns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; flex-shrink: 0; }
   .pat-btn {
@@ -514,6 +516,14 @@
       <button class="mini-btn sustain" id="sustainBtn">SUS</button>
     </div>
 
+    <div class="voice-chips" id="voiceChips">
+      <button class="chip on" data-voice="auto">AUTO</button>
+      <button class="chip" data-voice="0">H1</button>
+      <button class="chip" data-voice="1">H2</button>
+      <button class="chip" data-voice="2">H3</button>
+      <button class="chip" data-voice="3">H4</button>
+    </div>
+
     <div class="keyboard-wrap">
       <div class="keyboard" id="keyboard"></div>
       <div class="hint">Slide across keys · beats keep playing here</div>
@@ -601,6 +611,9 @@
   <b>▶</b> and <b>●</b> under the octave buttons run the beat and arm recording from here ·
   <b>SUS</b> next to them turns on sustain — while it's on, how long you hold a key is how
   long the recorded note rings for ·
+  the <b>AUTO / H1-H4</b> chips below choose which voice recording targets — AUTO spreads
+  notes across whichever is free (chords work), or pick one voice to record onto it
+  specifically, like arming a track ·
   the small <b>VOL</b> knob next to them is the same level as the SYN fader on the Beats
   mixer — turn either one and both move ·
   <b>SMP</b> loads your own audio file as the oscillator's waveform — tap it again while active to swap files ·
@@ -1320,12 +1333,18 @@
 
     const heldVoices = new Set();
     activeRecordings.forEach(r => heldVoices.add(r.voice));
+    const isFree = v => harmonyPatterns[v][best] === -1 && !heldVoices.has(v);
     let voice = -1;
-    for (let v = 0; v < HARMONY_VOICES; v++) {
-      if (harmonyPatterns[v][best] === -1 && !heldVoices.has(v)) { voice = v; break; }
+    if (recordTargetVoice === 'auto') {
+      for (let v = 0; v < HARMONY_VOICES; v++) {
+        if (isFree(v)) { voice = v; break; }
+      }
+    } else if (isFree(recordTargetVoice)) {
+      voice = recordTargetVoice;
     }
     if (voice === -1) {
-      toast('No free voice — note not recorded');
+      const label = recordTargetVoice === 'auto' ? 'No free voice' : ('H' + (recordTargetVoice + 1) + ' busy');
+      toast(label + ' — note not recorded');
       return;
     }
 
@@ -1512,7 +1531,7 @@
 
   const swingEl = document.getElementById('swing');
   const swingVal = document.getElementById('swingVal');
-  const swingChips = document.querySelectorAll('.chip');
+  const swingChips = document.querySelectorAll('.swing-chips .chip');
   function setSwing(v) {
     swing = v / 100;
     swingEl.value = v;
@@ -1560,6 +1579,26 @@
     sustainMode = !sustainMode;
     sustainBtn.classList.toggle('on', sustainMode);
     toast(sustainMode ? 'Sustain on — hold notes to record their length' : 'Sustain off');
+  });
+
+  // which voice recording targets — 'auto' (spread across whichever is
+  // free, today's behavior) or a specific 0-3 voice index, like arming one
+  // track in a multitrack recorder
+  let recordTargetVoice = 'auto';
+  const voiceChips = document.querySelectorAll('.voice-chips .chip');
+  function updateArmedRow() {
+    document.querySelectorAll('.track.harmony').forEach(row => {
+      row.classList.toggle('armed', recordTargetVoice !== 'auto' && +row.dataset.voice === recordTargetVoice);
+    });
+  }
+  voiceChips.forEach(chip => {
+    chip.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      unlock();
+      recordTargetVoice = chip.dataset.voice === 'auto' ? 'auto' : +chip.dataset.voice;
+      voiceChips.forEach(c => c.classList.toggle('on', c === chip));
+      updateArmedRow();
+    });
   });
 
   // ---------------- mixer ----------------
