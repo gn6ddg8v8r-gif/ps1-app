@@ -88,6 +88,8 @@
   .mini-btn.playing { background: var(--key-black); }
   .mini-btn.rec { background: var(--key-white); color: var(--ink); width: 48px; }
   .mini-btn.rec.armed { background: #D8322F; color: #fff; animation: pulse 0.7s infinite alternate; }
+  .mini-btn.sustain { background: var(--key-white); color: var(--ink); width: 48px; font-size: 10px; letter-spacing: 0.06em; }
+  .mini-btn.sustain.on { background: var(--key-black); color: #fff; }
   .pat-btn.confirm { background: #D8322F; color: #fff; }
 
   button { cursor: pointer; }
@@ -375,13 +377,19 @@
   .chan-label.muted { opacity: 0.35; text-decoration: line-through; }
   .chan-label.solo { color: var(--accent); font-weight: 700; }
 
-  .track.mel .cell.on { background: #7B4FD8; }
-  .track.mel .cell.on.ph { background: #A78BE8; }
-  .track.mel .cell .nl {
+  .track.harmony .cell .nl {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
     font-size: 8px; font-weight: 600; color: #fff;
   }
+  /* one hue per voice — note-on and its tied continuation share the same
+     fill (ties just drop the label), so a sustain reads as a repeated
+     color run across steps even with the grid's cell gap between them */
+  .track.harmony[data-voice="0"] .cell.on, .track.harmony[data-voice="0"] .cell.tie { background: #7B4FD8; }
+  .track.harmony[data-voice="1"] .cell.on, .track.harmony[data-voice="1"] .cell.tie { background: #4F7CD8; }
+  .track.harmony[data-voice="2"] .cell.on, .track.harmony[data-voice="2"] .cell.tie { background: #C84FD8; }
+  .track.harmony[data-voice="3"] .cell.on, .track.harmony[data-voice="3"] .cell.tie { background: #3FBF9E; }
+  .track.harmony .cell.on.ph, .track.harmony .cell.tie.ph { filter: brightness(1.25); }
   .track.acc .cell { aspect-ratio: 1 / 0.7; }
   .track.acc .cell.on { background: var(--ink); }
 
@@ -503,6 +511,7 @@
     <div class="mini-transport">
       <button class="mini-btn" id="miniPlay">▶</button>
       <button class="mini-btn rec" id="miniRec">●</button>
+      <button class="mini-btn sustain" id="sustainBtn">SUS</button>
     </div>
 
     <div class="keyboard-wrap">
@@ -590,6 +599,8 @@
   Slide your finger across keys to glide · multi-touch works ·
   <b>MAIN / ENV / OSC / LOFI</b> switch knob banks · drag knobs up/down, or tap <b>− +</b> for fine steps ·
   <b>▶</b> and <b>●</b> under the octave buttons run the beat and arm recording from here ·
+  <b>SUS</b> next to them turns on sustain — while it's on, how long you hold a key is how
+  long the recorded note rings for ·
   the small <b>VOL</b> knob next to them is the same level as the SYN fader on the Beats
   mixer — turn either one and both move ·
   <b>SMP</b> loads your own audio file as the oscillator's waveform — tap it again while active to swap files ·
@@ -602,14 +613,20 @@
 
   <h2>Beats</h2>
   Tap drum cells to toggle, drag to paint · <b>Bass</b> cells cycle through notes with each tap ·
-  <b>Mel</b> shows recorded melody notes — tap one to erase it ·
+  <b>H1-H4</b> are four independent recorded voices (real four-part harmony) — a note's
+  letter marks where it starts, unlabeled steps in the same color are it sustaining. Tap
+  a note to erase it, tap a sustained step to trim from there on, or drag from a note
+  across empty steps to extend how long it rings ·
   <b>Acc</b> steps make all drums hit harder ·
   the swing chips (<b>STR8 / 54 / 58 / 62 / 66</b>) jump to classic hardware-sampler swing feels ·
   <b>🎲 MUTATE</b> lightly varies the current drum pattern instead of replacing it.
 
   <h2>Recording</h2>
   Press <b>▶ PLAY</b>, arm <b>● REC</b>, then play the keys — every note snaps to the grid
-  and lands in the Mel track using your current patch.
+  and lands in whichever H1-H4 voice is free, using your current patch. Play up to 4 notes
+  at once (multi-touch, or a laptop chord) for real harmony — a 5th note is dropped with a
+  toast if all four are busy. Turn on <b>SUS</b> first and a note's length follows how long
+  you actually hold the key, instead of always snapping to one step.
 
   <h2>Mixer</h2>
   Drag faders for volume · <b>tap</b> a channel name to mute · <b>hold</b> it to solo.
@@ -1091,8 +1108,12 @@
 
   // accent: steps where all drums hit harder
   const accentPattern = new Array(STEPS).fill(false);
-  // melody: -1 = off, else MIDI note number (played through the synth engine)
-  const melodyPattern = new Array(STEPS).fill(-1);
+  // four independent harmony voices (H1-H4) — real four-part harmony, not a
+  // chord-stack: each voice moves on its own. Per step: -1 = off, -2 = tie
+  // (sustain — continue the previous note in this voice, don't retrigger),
+  // >=0 = a new note-on (MIDI number), played through the synth engine.
+  const HARMONY_VOICES = 4;
+  const harmonyPatterns = [0, 1, 2, 3].map(() => new Array(STEPS).fill(-1));
   const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
   let bpm = 120;
@@ -1114,7 +1135,23 @@
     const vel = accentPattern[step] ? 1.35 : 1;
     drumPattern.forEach((row, ti) => { if (row[step]) DRUMS[ti].play(t, vel); });
     if (bassPattern[step] >= 0) playBass(t, SCALE[bassPattern[step]], vel);
-    if (melodyPattern[step] >= 0) playSynthNote(t, melodyPattern[step], stepDur() * 0.92);
+    // each voice fires only on its own note-on steps (-2 ties are silent
+    // here — they just mean "the previous note is still due to ring") and
+    // sums the swing-adjusted duration of every consecutive tie that
+    // follows, so a sustained note plays as one continuous voice instead
+    // of being retriggered every step. Never wraps past the last step —
+    // exportWav renders one bar at a time, so a tie can't reference "next bar".
+    for (let v = 0; v < HARMONY_VOICES; v++) {
+      const val = harmonyPatterns[v][step];
+      if (val < 0) continue;
+      let total = 0, s = step;
+      while (true) {
+        total += stepDur() * (s % 2 === 0 ? 1 + swing : 1 - swing);
+        s++;
+        if (s >= STEPS || harmonyPatterns[v][s] !== -2) break;
+      }
+      playSynthNote(t, val, total * 0.92);
+    }
   }
   function scheduleStep(step, t) {
     triggerStep(step, t);
@@ -1200,24 +1237,27 @@
     }
     grid.appendChild(row);
   }
-  // melody row (filled by live recording; tap a cell to clear it)
-  const melCells = [];
-  {
+  // four harmony voice rows (H1-H4) — filled by live recording; tap a
+  // note-on to clear it, tap a tie to trim it, drag from a note-on to
+  // extend its sustain
+  const harmonyCells = [0, 1, 2, 3].map(() => []);
+  for (let v = 0; v < HARMONY_VOICES; v++) {
     const row = document.createElement('div');
-    row.className = 'track mel';
+    row.className = 'track harmony';
+    row.dataset.voice = String(v);
     const lbl = document.createElement('div');
     lbl.className = 'tname';
-    lbl.textContent = 'Mel';
+    lbl.textContent = 'H' + (v + 1);
     row.appendChild(lbl);
     for (let s = 0; s < STEPS; s++) {
       const c = document.createElement('div');
       c.className = 'cell';
-      c.dataset.mel = '1'; c.dataset.s = s;
+      c.dataset.harmony = String(v); c.dataset.s = s;
       const nl = document.createElement('div');
       nl.className = 'nl';
       c.appendChild(nl);
       row.appendChild(c);
-      melCells[s] = c;
+      harmonyCells[v][s] = c;
     }
     grid.appendChild(row);
   }
@@ -1245,24 +1285,77 @@
     bassCells[s].classList.toggle('on', v >= 0);
     bassCells[s].querySelector('.nl').textContent = v >= 0 ? SCALE_NAMES[v] : '';
   }
-  function renderMelCell(s) {
-    const m = melodyPattern[s];
-    melCells[s].classList.toggle('on', m >= 0);
-    melCells[s].querySelector('.nl').textContent = m >= 0 ? NOTE_NAMES[m % 12] : '';
+  function renderHarmonyCell(v, s) {
+    const val = harmonyPatterns[v][s];
+    const cell = harmonyCells[v][s];
+    cell.classList.toggle('on', val >= 0);
+    cell.classList.toggle('tie', val === -2);
+    cell.querySelector('.nl').textContent = val >= 0 ? NOTE_NAMES[val % 12] : '';
   }
 
-  // quantize a live-played note into the melody track
-  function recordNote(midi) {
+  // sustain: while off (default), recording behaves exactly as before —
+  // every note is a single-step blip. While on, a note's recorded length
+  // reflects how long the key was actually held. activeRecordings tracks
+  // notes currently mid-hold (id -> {voice, step, refTime}), keyed by the
+  // same id startVoice/stopVoice already use (pointerId, or 'kb'+code).
+  let sustainMode = false;
+  const activeRecordings = new Map();
+
+  // quantizes a live-played note into whichever of the 4 harmony voices is
+  // free at the target step. A voice counts as occupied there if either
+  // the pattern data already says so, or another note on that voice is
+  // still being held (sustain not yet backfilled, but it's definitely
+  // still ringing right now) — otherwise a slow overdub could let a second
+  // note grab a step the held note's eventual sustain was about to claim,
+  // and one of the two would silently lose its data on release.
+  function recordNote(midi, id) {
     if (!recArmed || !playing || !ctx) return;
     const tNow = ctx.currentTime;
-    let best = null, bestD = Infinity;
+    let best = null, bestTime = null, bestD = Infinity;
     stepTimesRing.forEach(st => {
       const d = Math.abs(st.time - tNow);
-      if (d < bestD) { bestD = d; best = st.step; }
+      if (d < bestD) { bestD = d; best = st.step; bestTime = st.time; }
     });
     if (best === null) return;
-    melodyPattern[best] = midi;
-    renderMelCell(best);
+
+    const heldVoices = new Set();
+    activeRecordings.forEach(r => heldVoices.add(r.voice));
+    let voice = -1;
+    for (let v = 0; v < HARMONY_VOICES; v++) {
+      if (harmonyPatterns[v][best] === -1 && !heldVoices.has(v)) { voice = v; break; }
+    }
+    if (voice === -1) {
+      toast('No free voice — note not recorded');
+      return;
+    }
+
+    harmonyPatterns[voice][best] = midi;
+    renderHarmonyCell(voice, best);
+    if (sustainMode) activeRecordings.set(id, { voice, step: best, refTime: bestTime });
+  }
+
+  // called when a recorded note is actually released — NOT the same as the
+  // defensive stopVoice(id, true) inside startVoice, which just cuts a
+  // voice off when sliding to a new key mid-touch (glide/retrigger within
+  // one continuous press, not a real note-off)
+  function finishRecordNote(id) {
+    const rec = activeRecordings.get(id);
+    if (!rec) return;
+    activeRecordings.delete(id);
+    if (!ctx) return;
+    const elapsed = ctx.currentTime - rec.refTime;
+    const maxStep = STEPS - 1 - rec.step; // never let a sustain wrap past the pattern end
+    let acc = 0, n = 0, s = rec.step;
+    while (n < maxStep) {
+      const stepLen = stepDur() * (s % 2 === 0 ? 1 + swing : 1 - swing);
+      if (acc + stepLen > elapsed) break;
+      acc += stepLen;
+      s++; n++;
+    }
+    for (let i = 1; i <= n; i++) {
+      harmonyPatterns[rec.voice][rec.step + i] = -2;
+      renderHarmonyCell(rec.voice, rec.step + i);
+    }
   }
 
   let paintMode = null;
@@ -1273,6 +1366,29 @@
     el.classList.toggle('on', val);
     if (val && !playing && ctx) DRUMS[t].play(ctx.currentTime + 0.01);
   }
+
+  // clears a run of consecutive ties starting at (and including, if it's a
+  // tie) index s — used both to trim a sustain from a tapped tie cell, and
+  // to clean up a note-on's own trailing ties when the note itself is cleared
+  function trimHarmonyTies(v, s) {
+    let i = s;
+    while (i < STEPS && harmonyPatterns[v][i] === -2) {
+      harmonyPatterns[v][i] = -1;
+      renderHarmonyCell(v, i);
+      i++;
+    }
+  }
+  function clearHarmonyNote(v, s) {
+    harmonyPatterns[v][s] = -1;
+    renderHarmonyCell(v, s);
+    trimHarmonyTies(v, s + 1);
+  }
+
+  // tap-vs-drag on a note-on cell can't be decided at pointerdown time —
+  // tapping clears the note, dragging across later empty cells extends its
+  // sustain — so the decision is deferred until pointerup/pointermove
+  let harmonyDrag = null; // { voice, originStep, boundaryStep, extended }
+
   grid.addEventListener('pointerdown', e => {
     const el = e.target.closest('.cell');
     if (!el) return;
@@ -1285,9 +1401,22 @@
       if (bassPattern[s] >= 0 && !playing) playBass(ctx.currentTime + 0.01, SCALE[bassPattern[s]]);
       return;
     }
-    if (el.dataset.mel) {
-      melodyPattern[s] = -1; // tap to clear a recorded note
-      renderMelCell(s);
+    if (el.dataset.harmony) {
+      const v = +el.dataset.harmony;
+      const val = harmonyPatterns[v][s];
+      if (val === -2) { trimHarmonyTies(v, s); return; } // tie: trim immediately, no ambiguity
+      if (val === -1) return; // empty: no-op — manual pitch entry is out of scope
+      // note-on: defer — could still turn out to be a tap (clear) or a drag (extend).
+      // skip past this note's own already-tied steps first — re-grabbing an
+      // already-sustained note must be able to extend past its current end,
+      // not treat its own ties as someone else's territory
+      let bs = s + 1;
+      while (bs < STEPS && harmonyPatterns[v][bs] === -2) bs++;
+      let boundary = STEPS;
+      for (; bs < STEPS; bs++) {
+        if (harmonyPatterns[v][bs] !== -1) { boundary = bs; break; }
+      }
+      harmonyDrag = { voice: v, originStep: s, boundaryStep: boundary, extended: false };
       return;
     }
     if (el.dataset.acc) {
@@ -1300,15 +1429,38 @@
     setDrumCell(el, paintMode);
   });
   grid.addEventListener('pointermove', e => {
+    if (harmonyDrag) {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const cell = el && el.closest && el.closest('.cell');
+      if (!cell || cell.dataset.harmony !== String(harmonyDrag.voice)) return;
+      const { voice, originStep, boundaryStep } = harmonyDrag;
+      const hoverStep = +cell.dataset.s;
+      const target = Math.min(hoverStep, boundaryStep - 1);
+      // recompute the whole span every move (not incrementally) — a fast
+      // drag can skip cells between move events, and this also handles
+      // dragging back toward the origin to shrink mid-gesture
+      for (let st = originStep + 1; st < boundaryStep; st++) {
+        harmonyPatterns[voice][st] = (st <= target && target > originStep) ? -2 : -1;
+        renderHarmonyCell(voice, st);
+      }
+      harmonyDrag.extended = target > originStep;
+      return;
+    }
     if (paintMode === null) return;
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const cell = el && el.closest && el.closest('.cell');
-    if (cell && !cell.dataset.bass && !cell.dataset.mel && !cell.dataset.acc) {
+    if (cell && !cell.dataset.bass && !cell.dataset.harmony && !cell.dataset.acc) {
       const t = +cell.dataset.t, s = +cell.dataset.s;
       if (drumPattern[t][s] !== paintMode) setDrumCell(cell, paintMode);
     }
   });
-  window.addEventListener('pointerup', () => { paintMode = null; });
+  window.addEventListener('pointerup', () => {
+    paintMode = null;
+    if (harmonyDrag) {
+      if (!harmonyDrag.extended) clearHarmonyNote(harmonyDrag.voice, harmonyDrag.originStep);
+      harmonyDrag = null;
+    }
+  });
 
   function clearPlayhead() {
     document.querySelectorAll('.cell.ph').forEach(c => c.classList.remove('ph'));
@@ -1324,7 +1476,7 @@
       clearPlayhead();
       drumCells.forEach(row => row[latest].classList.add('ph'));
       bassCells[latest].classList.add('ph');
-      melCells[latest].classList.add('ph');
+      harmonyCells.forEach(row => row[latest].classList.add('ph'));
       accCells[latest].classList.add('ph');
     }
   }
@@ -1399,6 +1551,15 @@
   miniPlay.addEventListener('pointerdown', e => {
     e.preventDefault();
     playing ? stopSeq() : startSeq();
+  });
+
+  const sustainBtn = document.getElementById('sustainBtn');
+  sustainBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    unlock();
+    sustainMode = !sustainMode;
+    sustainBtn.classList.toggle('on', sustainMode);
+    toast(sustainMode ? 'Sustain on — hold notes to record their length' : 'Sustain off');
   });
 
   // ---------------- mixer ----------------
@@ -1621,14 +1782,23 @@
     });
     const bstr = state.Bass || '.'.repeat(STEPS);
     const astr = state.Acc || '0'.repeat(STEPS);
-    const mArr = state.Mel ? state.Mel.split(',').map(Number) : [];
+    // legacy single-Mel saves (from before H1-H4 existed) migrate into H1 only
+    const hasHarmonyKeys = state.H1 || state.H2 || state.H3 || state.H4;
+    const harmonyArrs = [0, 1, 2, 3].map(v => {
+      const key = 'H' + (v + 1);
+      if (state[key]) return state[key].split(',').map(Number);
+      if (v === 0 && !hasHarmonyKeys && state.Mel) return state.Mel.split(',').map(Number);
+      return [];
+    });
     for (let s = 0; s < STEPS; s++) {
       bassPattern[s] = bstr[s] === '.' ? -1 : +bstr[s];
       renderBassCell(s);
       accentPattern[s] = astr[s] === '1';
       accCells[s].classList.toggle('on', accentPattern[s]);
-      melodyPattern[s] = Number.isFinite(mArr[s]) ? mArr[s] : -1;
-      renderMelCell(s);
+      for (let v = 0; v < HARMONY_VOICES; v++) {
+        harmonyPatterns[v][s] = Number.isFinite(harmonyArrs[v][s]) ? harmonyArrs[v][s] : -1;
+        renderHarmonyCell(v, s);
+      }
     }
     if (state.bpm) setBpm(state.bpm);
     if (state.swing !== undefined) setSwing(state.swing);
@@ -1640,7 +1810,9 @@
     });
     state.Bass = bassPattern.map(v => v < 0 ? '.' : String(v)).join('');
     state.Acc = accentPattern.map(v => v ? '1' : '0').join('');
-    state.Mel = melodyPattern.join(',');
+    for (let v = 0; v < HARMONY_VOICES; v++) {
+      state['H' + (v + 1)] = harmonyPatterns[v].join(',');
+    }
     return state;
   }
   let clearArmT = null;
@@ -2135,7 +2307,7 @@
     if (k) {
       const m = midiFor(k);
       startVoice(e.pointerId, m, k);
-      recordNote(m);
+      recordNote(m, e.pointerId);
     }
   });
   keyboard.addEventListener('pointermove', e => {
@@ -2144,7 +2316,7 @@
     const v = voices.get(e.pointerId);
     if (k && k !== v.keyEl) startVoice(e.pointerId, midiFor(k), k);
   });
-  const endPointer = e => stopVoice(e.pointerId);
+  const endPointer = e => { stopVoice(e.pointerId); finishRecordNote(e.pointerId); };
   keyboard.addEventListener('pointerup', endPointer);
   keyboard.addEventListener('pointercancel', endPointer);
   keyboard.addEventListener('pointerleave', endPointer);
@@ -2179,13 +2351,14 @@
     const keyEl = [...keyboard.children].find(k => +k.dataset.semi === semi);
     if (keyEl) {
       startVoice('kb' + e.code, midi, keyEl);
-      recordNote(midi);
+      recordNote(midi, 'kb' + e.code);
       kbHeld.add(e.code);
     }
   });
   document.addEventListener('keyup', e => {
     if (kbHeld.has(e.code)) {
       stopVoice('kb' + e.code);
+      finishRecordNote('kb' + e.code);
       kbHeld.delete(e.code);
     }
   });
