@@ -90,7 +90,7 @@
   .mini-btn.rec.armed { background: #D8322F; color: #fff; animation: pulse 0.7s infinite alternate; }
   .mini-btn.sustain { background: var(--key-white); color: var(--ink); width: 48px; font-size: 10px; letter-spacing: 0.06em; }
   .mini-btn.sustain.on { background: var(--key-black); color: #fff; }
-  .pat-btn.confirm { background: #D8322F; color: #fff; }
+  .groove-row.clear.confirm { background: #D8322F; color: #fff; }
 
   button { cursor: pointer; }
 
@@ -309,16 +309,14 @@
   .voice-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
   .track.harmony.armed .tname { color: var(--accent); font-weight: 700; }
 
-  .patterns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; flex-shrink: 0; }
-  .pat-btn {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
-    padding: 9px 0; border: none; border-radius: 8px;
-    background: var(--key-white); color: var(--ink);
-    box-shadow: 0 2px 0 rgba(0,0,0,0.18);
+  .groove-row {
+    display: block; width: 100%; text-align: left;
+    font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+    padding: 11px 4px; border: none; background: none; color: #EDEBE4;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
   }
-  .pat-btn:active { transform: translateY(1px); box-shadow: 0 1px 0 rgba(0,0,0,0.2); }
-  .pat-btn.clear { background: var(--key-black); color: var(--key-white); }
+  .groove-row:active { background: rgba(255,255,255,0.08); }
+  .groove-row.clear { color: #FF8A80; margin-top: 16px; border-bottom: none; border-radius: 8px; }
 
   .slots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; flex-shrink: 0; }
   .slot-btn {
@@ -566,16 +564,9 @@
     <div class="row-label">Mixer · tap name = mute · hold = solo</div>
     <div class="mixer" id="mixer"></div>
 
-    <div class="row-label">Starter grooves</div>
-    <div class="patterns">
-      <button class="pat-btn" data-pat="house">HOUSE</button>
-      <button class="pat-btn" data-pat="hiphop">HIP-HOP</button>
-      <button class="pat-btn" data-pat="techno">TECHNO</button>
-      <button class="pat-btn" data-pat="trap">TRAP</button>
-      <button class="pat-btn" data-pat="dnb">D&amp;B</button>
-      <button class="pat-btn" data-pat="dembow">DEMBOW</button>
-      <button class="pat-btn" data-pat="funk">FUNK</button>
-      <button class="pat-btn clear" data-pat="clear">CLEAR</button>
+    <div class="row-label">Groove · full patch recall — pattern, harmony, oscillator, knobs</div>
+    <div class="io-row single">
+      <button class="io-btn" id="grooveBtn">🎼 GROOVE ▾</button>
     </div>
 
     <div class="row-label">Slots · arm save, then pick a slot</div>
@@ -632,7 +623,10 @@
   across empty steps to extend how long it rings ·
   <b>Acc</b> steps make all drums hit harder ·
   the swing chips (<b>STR8 / 54 / 58 / 62 / 66</b>) jump to classic hardware-sampler swing feels ·
-  <b>🎲 MUTATE</b> lightly varies the current drum pattern instead of replacing it.
+  <b>🎲 MUTATE</b> lightly varies the current drum pattern instead of replacing it ·
+  <b>🎼 GROOVE</b> opens a categorized list of full-patch presets — picking one recalls
+  the drum/bass/harmony pattern <i>and</i> the oscillator and every knob bank, not just
+  the beat · <b>Clear Pattern</b> at the bottom needs a second tap to confirm.
 
   <h2>Recording</h2>
   Press <b>▶ PLAY</b>, arm <b>● REC</b>, then play the keys — every note snaps to the grid
@@ -659,6 +653,7 @@
 
   <div class="dismiss">tap anywhere to close</div>
 </div>
+<div class="overlay" id="grooveOverlay"></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1739,78 +1734,320 @@
   })();
   renderKeysVol(); // initial pointer position matches the default 90% level
 
-  // ---------------- starter patterns ----------------
-  const PATTERNS = {
-    house: {
-      Kick:  '1000100010001000',
-      Snare: '0000000000000000',
-      Clap:  '0000100000001000',
-      CHat:  '1000100010001000',
-      OHat:  '0010001000100010',
-      Bass:  '..0...0...0...3.',
-      Acc:   '1000000010000000',
-      bpm: 124, swing: 0,
+  // ---------------- starter grooves ----------------
+  // small helper so harmony content is authored as {step, note, length}
+  // entries instead of hand-typed comma strings — length>1 backfills tie
+  // (-2) steps, matching the exact format applyState() already parses
+  function voice(entries) {
+    const a = new Array(STEPS).fill(-1);
+    entries.forEach(({ at, midi, len = 1 }) => {
+      a[at] = midi;
+      for (let i = 1; i < len && at + i < STEPS; i++) a[at + i] = -2;
+    });
+    return a.join(',');
+  }
+  const NO_VOICE = new Array(STEPS).fill(-1).join(',');
+
+  const GROOVE_CATEGORIES = [
+    {
+      label: 'House & Techno',
+      items: [
+        {
+          id: 'house', label: 'House',
+          pattern: {
+            Kick:  '1000100010001000',
+            Snare: '0000000000000000',
+            Clap:  '0000100000001000',
+            CHat:  '1000100010001000',
+            OHat:  '0010001000100010',
+            Bass:  '..0...0...0...3.',
+            Acc:   '1000000010000000',
+            bpm: 124, swing: 0,
+            H1: voice([{ at: 4, midi: 67 }, { at: 12, midi: 67 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sawtooth',
+          knobs: { cutoff: 0.62, delay: 0.18, reverb: 0.35, drive: 0.15, attack: 0.05, decay: 0.28, sustain: 0.55, release: 0.22, detune: 0.22, glide: 0, lfoRate: 0.3, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0, duck: 0.35 },
+        },
+        {
+          id: 'techno', label: 'Techno',
+          pattern: {
+            Kick:  '1000100010001000',
+            Snare: '0000000000000000',
+            Clap:  '0000100000001001',
+            CHat:  '1110111011101110',
+            OHat:  '0010001000100010',
+            Bass:  '0.0.0.0.0.0.3.5.',
+            Acc:   '1000100010001000',
+            bpm: 132, swing: 0,
+            H1: NO_VOICE, H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'square',
+          knobs: { cutoff: 0.78, delay: 0.12, reverb: 0.2, drive: 0.35, attack: 0.02, decay: 0.18, sustain: 0.45, release: 0.12, detune: 0.28, glide: 0, lfoRate: 0.55, lfoDepth: 0.08, crackle: 0, wow: 0, crush: 0, duck: 0.3 },
+        },
+        {
+          id: 'deephouse', label: 'Deep House',
+          pattern: {
+            Kick:  '1000100010001000',
+            Snare: '0000000000000000',
+            Clap:  '0000100000000000',
+            CHat:  '0010101000101010',
+            OHat:  '0010001000100010',
+            Bass:  '0.0.0.0.0.0.0.0.',
+            Acc:   '0000000000000000',
+            bpm: 122, swing: 0,
+            H1: voice([{ at: 2, midi: 63, len: 3 }, { at: 10, midi: 65, len: 3 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'triangle',
+          knobs: { cutoff: 0.5, delay: 0.22, reverb: 0.5, drive: 0.08, attack: 0.08, decay: 0.35, sustain: 0.6, release: 0.4, detune: 0.15, glide: 0, lfoRate: 0.25, lfoDepth: 0.04, crackle: 0, wow: 0, crush: 0, duck: 0.25 },
+        },
+      ],
     },
-    hiphop: {
-      Kick:  '1000000110100000',
-      Snare: '0000100000001000',
-      Clap:  '0000000000000010',
-      CHat:  '1010101010101010',
-      OHat:  '0000001000000000',
-      Bass:  '0......0..1.....',
-      bpm: 90, swing: 35,
+    {
+      label: 'Hip-Hop & Trap',
+      items: [
+        {
+          id: 'hiphop', label: 'Hip-Hop',
+          pattern: {
+            Kick:  '1000000110100000',
+            Snare: '0000100000001000',
+            Clap:  '0000000000000010',
+            CHat:  '1010101010101010',
+            OHat:  '0000001000000000',
+            Bass:  '0......0..1.....',
+            Acc:   '0000000000000000',
+            bpm: 90, swing: 35,
+            H1: voice([{ at: 8, midi: 60, len: 2 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'triangle',
+          knobs: { cutoff: 0.45, delay: 0.2, reverb: 0.4, drive: 0.1, attack: 0.1, decay: 0.4, sustain: 0.6, release: 0.35, detune: 0.18, glide: 0, lfoRate: 0.25, lfoDepth: 0.03, crackle: 0.15, wow: 0.1, crush: 0, duck: 0.15 },
+        },
+        {
+          id: 'trap', label: 'Trap',
+          pattern: {
+            Kick:  '1000000000100100',
+            Snare: '0000000010000000',
+            Clap:  '0000000000000000',
+            CHat:  '1010101011111010',
+            OHat:  '0000000000000010',
+            Bass:  '0.........0..1..',
+            Acc:   '1000000010000000',
+            bpm: 140, swing: 0,
+            H1: voice([{ at: 8, midi: 55, len: 2 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'square',
+          knobs: { cutoff: 0.38, delay: 0.15, reverb: 0.25, drive: 0.3, attack: 0.02, decay: 0.2, sustain: 0.5, release: 0.15, detune: 0.3, glide: 0.05, lfoRate: 0.3, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0.1, duck: 0.2 },
+        },
+        {
+          id: 'boombap', label: 'Boom Bap',
+          pattern: {
+            Kick:  '1000000010100000',
+            Snare: '0000100000001000',
+            Clap:  '0000000000000000',
+            CHat:  '1010101010101010',
+            OHat:  '0000000000000000',
+            Bass:  '0.......3.......',
+            Acc:   '0000000010000000',
+            bpm: 88, swing: 8,
+            H1: voice([{ at: 0, midi: 60 }, { at: 6, midi: 63 }, { at: 10, midi: 58 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'triangle',
+          knobs: { cutoff: 0.42, delay: 0.15, reverb: 0.3, drive: 0.15, attack: 0.03, decay: 0.25, sustain: 0.5, release: 0.2, detune: 0.15, glide: 0, lfoRate: 0.3, lfoDepth: 0.03, crackle: 0.3, wow: 0.15, crush: 0.1, duck: 0.15 },
+        },
+      ],
     },
-    techno: {
-      Kick:  '1000100010001000',
-      Snare: '0000000000000000',
-      Clap:  '0000100000001001',
-      CHat:  '1110111011101110',
-      OHat:  '0010001000100010',
-      Bass:  '0.0.0.0.0.0.3.5.',
-      Acc:   '1000100010001000',
-      bpm: 132, swing: 0,
+    {
+      label: 'Bass & Breaks',
+      items: [
+        {
+          id: 'dnb', label: 'D&B',
+          pattern: {
+            Kick:  '1000000000100000',
+            Snare: '0000100000001000',
+            Clap:  '0000000000000000',
+            CHat:  '1010110110101101',
+            OHat:  '0000000000000000',
+            Bass:  '0...5...3...1...',
+            Acc:   '0000100000001000',
+            bpm: 174, swing: 0,
+            H1: voice([{ at: 8, midi: 72 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sawtooth',
+          knobs: { cutoff: 0.85, delay: 0.1, reverb: 0.15, drive: 0.2, attack: 0.01, decay: 0.12, sustain: 0.4, release: 0.1, detune: 0.25, glide: 0, lfoRate: 0.6, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0, duck: 0.15 },
+        },
+        {
+          id: 'dembow', label: 'Dembow',
+          pattern: {
+            Kick:  '1000100010001000',
+            Snare: '0001001000010010',
+            Clap:  '0000000000000000',
+            CHat:  '1010101010101010',
+            OHat:  '0000000000000000',
+            Bass:  '0...0...0...0...',
+            Acc:   '1000000010000000',
+            bpm: 95, swing: 0,
+            H1: voice([{ at: 4, midi: 64 }, { at: 12, midi: 64 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'square',
+          knobs: { cutoff: 0.55, delay: 0.25, reverb: 0.4, drive: 0.15, attack: 0.06, decay: 0.3, sustain: 0.55, release: 0.25, detune: 0.2, glide: 0, lfoRate: 0.35, lfoDepth: 0.04, crackle: 0, wow: 0, crush: 0, duck: 0.25 },
+        },
+        {
+          id: 'ukgarage', label: 'UK Garage',
+          pattern: {
+            Kick:  '1000000010001000',
+            Snare: '0000101000001010',
+            Clap:  '0000000000000000',
+            CHat:  '1011101110111011',
+            OHat:  '0000000100000001',
+            Bass:  '..0.....3.......',
+            Acc:   '0000000000000000',
+            bpm: 130, swing: 0,
+            H1: NO_VOICE, H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'square',
+          knobs: { cutoff: 0.72, delay: 0.15, reverb: 0.22, drive: 0.18, attack: 0.02, decay: 0.2, sustain: 0.45, release: 0.15, detune: 0.22, glide: 0, lfoRate: 0.4, lfoDepth: 0.03, crackle: 0, wow: 0, crush: 0, duck: 0.2 },
+        },
+      ],
     },
-    trap: {
-      Kick:  '1000000000100100',
-      Snare: '0000000010000000',
-      Clap:  '0000000000000000',
-      CHat:  '1010101011111010',
-      OHat:  '0000000000000010',
-      Bass:  '0.........0..1..',
-      Acc:   '1000000010000000',
-      bpm: 140, swing: 0,
+    {
+      label: 'Funk & Roots',
+      items: [
+        {
+          id: 'funk', label: 'Funk',
+          pattern: {
+            Kick:  '1001001000100000',
+            Snare: '0000100100001010',
+            Clap:  '0000000000000000',
+            CHat:  '1011101110111011',
+            OHat:  '0000000000000100',
+            Bass:  '0..3..0...5..3..',
+            Acc:   '1000100010001000',
+            bpm: 102, swing: 25,
+            H1: voice([{ at: 0, midi: 60 }, { at: 6, midi: 64 }, { at: 10, midi: 67 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sawtooth',
+          knobs: { cutoff: 0.68, delay: 0.15, reverb: 0.25, drive: 0.2, attack: 0.03, decay: 0.22, sustain: 0.5, release: 0.18, detune: 0.2, glide: 0, lfoRate: 0.4, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0, duck: 0.3 },
+        },
+        {
+          id: 'country', label: 'Country',
+          pattern: {
+            Kick:  '1000000010000000',
+            Snare: '0000100000001000',
+            Clap:  '0000000000000000',
+            CHat:  '0000000000000000',
+            OHat:  '0000000000000000',
+            Bass:  '0.......3.......',
+            Acc:   '1000000010000000',
+            bpm: 118, swing: 8,
+            H1: voice([{ at: 0, midi: 60 }, { at: 4, midi: 64 }, { at: 8, midi: 67 }, { at: 12, midi: 64 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'triangle',
+          knobs: { cutoff: 0.6, delay: 0.1, reverb: 0.25, drive: 0.12, attack: 0.02, decay: 0.25, sustain: 0.55, release: 0.2, detune: 0.15, glide: 0, lfoRate: 0.3, lfoDepth: 0.02, crackle: 0, wow: 0, crush: 0, duck: 0.1 },
+        },
+        {
+          id: 'blues', label: 'Blues',
+          pattern: {
+            Kick:  '1000001000100000',
+            Snare: '0000100000001010',
+            Clap:  '0000000000000000',
+            CHat:  '1010101010101010',
+            OHat:  '0000000000000000',
+            Bass:  '0...3...5...3...',
+            Acc:   '0000000000000000',
+            bpm: 82, swing: 24,
+            H1: voice([{ at: 6, midi: 65, len: 2 }, { at: 14, midi: 63, len: 2 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'square',
+          knobs: { cutoff: 0.5, delay: 0.15, reverb: 0.3, drive: 0.25, attack: 0.03, decay: 0.3, sustain: 0.55, release: 0.3, detune: 0.2, glide: 0.08, lfoRate: 0.25, lfoDepth: 0.04, crackle: 0.05, wow: 0, crush: 0, duck: 0.15 },
+        },
+        {
+          id: 'dirtyblues', label: 'Dirty Blues',
+          pattern: {
+            Kick:  '1000000010000000',
+            Snare: '0000100000001000',
+            Clap:  '0000000000000000',
+            CHat:  '1010101010101010',
+            OHat:  '0000000000000000',
+            Bass:  '0.......5.......',
+            Acc:   '1000000010000000',
+            bpm: 90, swing: 32,
+            H1: voice([{ at: 6, midi: 65, len: 2 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'square',
+          knobs: { cutoff: 0.32, delay: 0.15, reverb: 0.25, drive: 0.55, attack: 0.02, decay: 0.25, sustain: 0.5, release: 0.2, detune: 0.25, glide: 0.05, lfoRate: 0.3, lfoDepth: 0.05, crackle: 0.1, wow: 0, crush: 0.15, duck: 0.1 },
+        },
+      ],
     },
-    dnb: {
-      Kick:  '1000000000100000',
-      Snare: '0000100000001000',
-      Clap:  '0000000000000000',
-      CHat:  '1010110110101101',
-      OHat:  '0000000000000000',
-      Bass:  '0...5...3...1...',
-      Acc:   '0000100000001000',
-      bpm: 174, swing: 0,
+    {
+      label: 'Chill & Focus',
+      items: [
+        {
+          id: 'lofistudy', label: 'Lofi Study',
+          pattern: {
+            Kick:  '1000000010000000',
+            Snare: '0000000000000000',
+            Clap:  '0000000000000000',
+            CHat:  '0010001000100010',
+            OHat:  '0000000000000000',
+            Bass:  '0.......3.......',
+            Acc:   '0000000000000000',
+            bpm: 73, swing: 16,
+            H1: voice([{ at: 0, midi: 60, len: 8 }, { at: 8, midi: 65, len: 8 }]),
+            H2: voice([{ at: 4, midi: 72 }, { at: 12, midi: 69 }]),
+            H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sine',
+          knobs: { cutoff: 0.35, delay: 0.3, reverb: 0.6, drive: 0.05, attack: 0.25, decay: 0.4, sustain: 0.65, release: 0.55, detune: 0.18, glide: 0.05, lfoRate: 0.2, lfoDepth: 0.06, crackle: 0.35, wow: 0.3, crush: 0.05, duck: 0.1 },
+        },
+        {
+          id: 'lofirain', label: 'Lofi Rain',
+          pattern: {
+            Kick:  '1000000000000000',
+            Snare: '0000000000000000',
+            Clap:  '0000000000000000',
+            CHat:  '0000001000000010',
+            OHat:  '0000000000000000',
+            Bass:  '0...............',
+            Acc:   '0000000000000000',
+            bpm: 68, swing: 16,
+            H1: voice([{ at: 0, midi: 57, len: 12 }]),
+            H2: voice([{ at: 8, midi: 65, len: 6 }]),
+            H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sine',
+          knobs: { cutoff: 0.28, delay: 0.35, reverb: 0.75, drive: 0.03, attack: 0.4, decay: 0.5, sustain: 0.7, release: 0.65, detune: 0.15, glide: 0.1, lfoRate: 0.15, lfoDepth: 0.08, crackle: 0.4, wow: 0.4, crush: 0.05, duck: 0.05 },
+        },
+        {
+          id: 'ambientdrift', label: 'Ambient Drift',
+          pattern: {
+            Kick:  '0000000000000000',
+            Snare: '0000000000000000',
+            Clap:  '0000000000000000',
+            CHat:  '0000000000000000',
+            OHat:  '0000000000000000',
+            Bass:  '................',
+            Acc:   '0000000000000000',
+            bpm: 60, swing: 0,
+            H1: voice([{ at: 0, midi: 55, len: 16 }]),
+            H2: voice([{ at: 0, midi: 62, len: 16 }]),
+            H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sine',
+          knobs: { cutoff: 0.3, delay: 0.25, reverb: 0.8, drive: 0.02, attack: 0.85, decay: 0.6, sustain: 0.75, release: 0.85, detune: 0.12, glide: 0.15, lfoRate: 0.12, lfoDepth: 0.5, crackle: 0.1, wow: 0.2, crush: 0, duck: 0 },
+        },
+      ],
     },
-    dembow: {
-      Kick:  '1000100010001000',
-      Snare: '0001001000010010',
-      Clap:  '0000000000000000',
-      CHat:  '1010101010101010',
-      OHat:  '0000000000000000',
-      Bass:  '0...0...0...0...',
-      Acc:   '1000000010000000',
-      bpm: 95, swing: 0,
-    },
-    funk: {
-      Kick:  '1001001000100000',
-      Snare: '0000100100001010',
-      Clap:  '0000000000000000',
-      CHat:  '1011101110111011',
-      OHat:  '0000000000000100',
-      Bass:  '0..3..0...5..3..',
-      Acc:   '1000100010001000',
-      bpm: 102, swing: 25,
-    },
-  };
+  ];
   function applyState(state) {
     DRUMS.forEach((trk, ti) => {
       const str = state[trk.name] || '0'.repeat(STEPS);
@@ -1854,31 +2091,83 @@
     }
     return state;
   }
-  let clearArmT = null;
-  document.querySelectorAll('.pat-btn').forEach(btn => {
+  // groove = full patch recall: pattern (existing applyState) + oscillator +
+  // every knob bank. Every piece here is an already-shipped function —
+  // this is pure orchestration, no new audio-graph nodes, so it needs no
+  // changes to exportWav's save/restore list.
+  function applyGroove(g) {
+    applyState(g.pattern);
+    selectWave(document.querySelector(`.wave-btn[data-wave="${g.wave}"]`));
+    Object.keys(g.knobs).forEach(name => { params[name].v = g.knobs[name]; applyParam(name); });
+    renderAllSlots();
+    if (!playing) startSeq();
+  }
+
+  // sheet content is built from GROOVE_CATEGORIES, not hand-written HTML —
+  // adding a 17th groove later is one data entry, no UI code to touch
+  const grooveBtn = document.getElementById('grooveBtn');
+  const grooveOverlay = document.getElementById('grooveOverlay');
+  GROOVE_CATEGORIES.forEach(cat => {
+    const h2 = document.createElement('h2');
+    h2.textContent = cat.label;
+    grooveOverlay.appendChild(h2);
+    cat.items.forEach(g => {
+      const row = document.createElement('button');
+      row.className = 'groove-row';
+      row.textContent = g.label;
+      row.dataset.groove = g.id;
+      grooveOverlay.appendChild(row);
+    });
+  });
+  const grooveClearRow = document.createElement('button');
+  grooveClearRow.className = 'groove-row clear';
+  grooveClearRow.textContent = 'Clear Pattern';
+  grooveOverlay.appendChild(grooveClearRow);
+  const grooveDismissHint = document.createElement('div');
+  grooveDismissHint.className = 'dismiss';
+  grooveDismissHint.textContent = 'tap outside a row to close';
+  grooveOverlay.appendChild(grooveDismissHint);
+
+  grooveBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    unlock();
+    grooveOverlay.classList.add('on');
+  });
+  // background tap dismisses; row taps below stopPropagation so they don't
+  // also trigger this
+  grooveOverlay.addEventListener('pointerdown', e => {
+    if (e.target === grooveOverlay) grooveOverlay.classList.remove('on');
+  });
+
+  let grooveClearArmT = null;
+  grooveOverlay.querySelectorAll('.groove-row').forEach(btn => {
     btn.addEventListener('pointerdown', e => {
       e.preventDefault();
+      e.stopPropagation();
       unlock();
-      if (btn.dataset.pat === 'clear') {
+      if (btn.classList.contains('clear')) {
         if (!btn.classList.contains('confirm')) {
           btn.classList.add('confirm');
-          btn.textContent = 'SURE?';
-          clearTimeout(clearArmT);
-          clearArmT = setTimeout(() => {
+          btn.textContent = 'Tap again to clear';
+          clearTimeout(grooveClearArmT);
+          grooveClearArmT = setTimeout(() => {
             btn.classList.remove('confirm');
-            btn.textContent = 'CLEAR';
+            btn.textContent = 'Clear Pattern';
           }, 2000);
           return;
         }
-        clearTimeout(clearArmT);
+        clearTimeout(grooveClearArmT);
         btn.classList.remove('confirm');
-        btn.textContent = 'CLEAR';
+        btn.textContent = 'Clear Pattern';
         applyState({});
         toast('Pattern cleared');
-      } else {
-        applyState(PATTERNS[btn.dataset.pat]);
-        if (!playing) startSeq();
+        grooveOverlay.classList.remove('on');
+        return;
       }
+      const groove = GROOVE_CATEGORIES.flatMap(c => c.items).find(g => g.id === btn.dataset.groove);
+      applyGroove(groove);
+      grooveOverlay.classList.remove('on');
+      toast(groove.label + ' loaded');
     });
   });
 
