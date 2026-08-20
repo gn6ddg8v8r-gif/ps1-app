@@ -308,6 +308,15 @@
   .chip.on { background: var(--accent); color: #fff; opacity: 1; }
   .voice-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
   .track.harmony.armed .tname { color: var(--accent); font-weight: 700; }
+  /* brief "a note just landed here" wash — only used in AUTO record mode,
+     where the target voice isn't fixed like the manual .armed highlight */
+  .track.harmony { position: relative; }
+  .track.harmony.flash::after {
+    content: ''; position: absolute; inset: -2px 0; pointer-events: none;
+    border-radius: 6px; background: var(--accent);
+    animation: rowFlash 0.5s ease-out;
+  }
+  @keyframes rowFlash { from { opacity: 0.32; } to { opacity: 0; } }
 
   .groove-row {
     display: block; width: 100%; text-align: left;
@@ -1309,6 +1318,17 @@
   let sustainMode = false;
   const activeRecordings = new Map();
 
+  // brief "a note just landed here" wash on a harmony row — only used in
+  // AUTO mode, where the target voice moves around; manual mode already
+  // has the persistent .armed highlight from the voice selector for this
+  function flashHarmonyRow(v) {
+    const row = document.querySelector(`.track.harmony[data-voice="${v}"]`);
+    if (!row) return;
+    row.classList.remove('flash');
+    void row.offsetWidth; // force reflow so re-adding the class restarts the animation
+    row.classList.add('flash');
+  }
+
   // quantizes a live-played note into whichever of the 4 harmony voices is
   // free at the target step. A voice counts as occupied there if either
   // the pattern data already says so, or another note on that voice is
@@ -1345,6 +1365,7 @@
 
     harmonyPatterns[voice][best] = midi;
     renderHarmonyCell(voice, best);
+    if (recordTargetVoice === 'auto') flashHarmonyRow(voice);
     if (sustainMode) activeRecordings.set(id, { voice, step: best, refTime: bestTime });
   }
 
