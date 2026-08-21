@@ -319,6 +319,13 @@
   }
   @keyframes rowFlash { from { opacity: 0.32; } to { opacity: 0; } }
 
+  .chain-preview {
+    font-family: 'Space Grotesk', sans-serif; font-size: 15px;
+    letter-spacing: 0.06em; color: var(--accent); margin: 10px 0 18px;
+    min-height: 1.4em;
+  }
+  .chain-add-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+
   .groove-row {
     display: block; width: 100%; text-align: left;
     font-family: 'IBM Plex Mono', monospace; font-size: 13px;
@@ -360,6 +367,7 @@
   .io-btn:active { transform: translateY(1px); box-shadow: 0 1px 0 rgba(0,0,0,0.2); }
   .io-btn:disabled { opacity: 0.5; }
   .io-btn.rec-armed { background: #D8322F; color: #fff; animation: pulse 0.7s infinite alternate; }
+  .io-btn.fill-armed { background: #D8322F; color: #fff; animation: pulse 0.7s infinite alternate; }
   .io-row.single { grid-template-columns: 1fr; }
 
   .rec-btn {
@@ -583,8 +591,9 @@
       <button class="chip" data-swing="24">62</button>
       <button class="chip" data-swing="32">66</button>
     </div>
-    <div class="io-row single">
+    <div class="io-row">
       <button class="io-btn" id="mutateBtn">🎲 MUTATE</button>
+      <button class="io-btn" id="fillBtn">🔥 FILL</button>
     </div>
 
     <div class="row-label">Mixer · tap name = mute · hold = solo</div>
@@ -602,6 +611,12 @@
       <button class="slot-btn" data-slot="B">B</button>
       <button class="slot-btn" data-slot="C">C</button>
       <button class="slot-btn" data-slot="D">D</button>
+    </div>
+
+    <div class="row-label">Song · build a chain from your slots, then play it back</div>
+    <div class="io-row">
+      <button class="io-btn" id="chainBtn">🔗 CHAIN</button>
+      <button class="io-btn" id="songBtn">▶ SONG</button>
     </div>
 
     <div class="row-label">File · export saves the current pattern</div>
@@ -680,6 +695,21 @@
   <div class="dismiss">tap anywhere to close</div>
 </div>
 <div class="overlay" id="grooveOverlay"></div>
+<div class="overlay" id="chainOverlay">
+  <h2>Song chain</h2>
+  <div class="chain-preview" id="chainPreview">(empty)</div>
+  <div class="chain-add-row">
+    <button class="chip" data-add="A">+ A</button>
+    <button class="chip" data-add="B">+ B</button>
+    <button class="chip" data-add="C">+ C</button>
+    <button class="chip" data-add="D">+ D</button>
+  </div>
+  <div class="io-row">
+    <button class="io-btn" id="chainUndoBtn">Undo last</button>
+    <button class="io-btn" id="chainClearBtn">Clear</button>
+  </div>
+  <div class="dismiss">tap anywhere to close</div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1177,13 +1207,33 @@
 
   function stepDur() { return 60 / bpm / 4; }
 
+  // FILL: tap-to-queue one-shot busier variation on the last beat (steps
+  // 12-15) before the pattern loops, then auto-reverts. fillOverride is a
+  // throwaway drumPattern-shaped copy (steps 12-15 only) with extra hits
+  // OR'd in — the real drumPattern is never touched.
+  let fillArmed = false;
+  let fillActive = false;
+  let fillOverride = null;
+
+  // scheduleStep's very first call after startSeq() is always step 0 (that's
+  // how playback begins), but it isn't a bar *wrapping* — only a genuine
+  // 15→0 transition during an already-running sequence is. Without this,
+  // onBarStart() (and song mode's chain-advance) fires within tens of ms of
+  // every play, before a real bar has elapsed, at any BPM — startSeq()'s
+  // fixed 60ms lead is already inside the scheduler's 120ms lookahead
+  // window by the time its first tick runs.
+  let seqStepScheduled = false;
+
   // fires the sounds for one step — shared by the live scheduler and the
   // offline WAV renderer, which doesn't want the UI/recording bookkeeping below
   function triggerStep(step, t) {
     const vel = ACCENT_VEL[accentPattern[step]];
     const jitterT = () => (Math.random() - 0.5) * humanize * 0.016;
     const jitterV = v => v * (1 + (Math.random() - 0.5) * humanize * 0.3);
-    drumPattern.forEach((row, ti) => { if (row[step]) DRUMS[ti].play(t + jitterT(), jitterV(vel)); });
+    drumPattern.forEach((row, ti) => {
+      const src = (fillActive && step >= 12) ? fillOverride[ti] : row;
+      if (src[step]) DRUMS[ti].play(t + jitterT(), jitterV(vel));
+    });
     if (bassPattern[step] >= 0) playBass(t + jitterT(), SCALE[bassPattern[step]], jitterV(vel));
     // each voice fires only on its own note-on steps (-2 ties are silent
     // here — they just mean "the previous note is still due to ring") and
@@ -1204,10 +1254,33 @@
     }
   }
   function scheduleStep(step, t) {
+    // arm check must run BEFORE triggerStep so step 12 itself, not just
+    // 13-15, gets the fill
+    if (step === 12 && fillArmed) {
+      fillOverride = buildFillOverride();
+      fillActive = true;
+      fillArmed = false;
+      updateFillBtn();
+    }
     triggerStep(step, t);
     stepTimesRing.push({ step, time: t });
     if (stepTimesRing.length > 48) stepTimesRing.shift();
     uiStepQueue.push({ step, time: t });
+    if (step === 0 && seqStepScheduled) onBarStart();
+    seqStepScheduled = true;
+  }
+
+  // fired once per bar, right as its step 0 is scheduled (same lookahead
+  // lead time every other step gets) — the one place FILL's auto-revert
+  // and song mode's chain-advance both hook in, so there's a single
+  // "a bar just ended" event instead of two separate wrap-detectors
+  function onBarStart() {
+    if (fillActive) {
+      fillActive = false;
+      fillOverride = null;
+      updateFillBtn();
+    }
+    advanceSong();
   }
 
   function scheduler() {
@@ -1227,6 +1300,7 @@
     currentStep = 0;
     nextStepTime = ctx.currentTime + 0.06;
     uiStepQueue = [];
+    seqStepScheduled = false;
     timerId = setInterval(scheduler, LOOKAHEAD_MS);
     playBtn.textContent = '■ STOP';
     playBtn.classList.add('playing');
@@ -2329,6 +2403,30 @@
     mutatePattern();
   });
 
+  // ---------------- fill ----------------
+  // tap-to-queue: arms on tap, plays a busier last beat (steps 12-15) the
+  // next time the pattern gets there, then auto-reverts — see scheduleStep/
+  // onBarStart/triggerStep for the scheduling half of this
+  const FILL_PROB = { Kick: 0.18, Snare: 0.2, Clap: 0.15, CHat: 0.4, OHat: 0.35 };
+  function buildFillOverride() {
+    return DRUMS.map((trk, ti) => {
+      const prob = FILL_PROB[trk.name] ?? 0.25;
+      return drumPattern[ti].map((v, s) => (s >= 12 && Math.random() < prob) ? true : v);
+    });
+  }
+  const fillBtn = document.getElementById('fillBtn');
+  function updateFillBtn() {
+    fillBtn.classList.toggle('fill-armed', fillArmed || fillActive);
+  }
+  fillBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    unlock();
+    if (fillArmed || fillActive) return; // tap-to-queue: no double-arm, no cancel
+    fillArmed = true;
+    updateFillBtn();
+    toast('Fill armed — plays on the last beat');
+  });
+
   // ---------------- save slots ----------------
   const STORE_KEY = 'ps1-slots';
   let slots = {};            // in-memory copy
@@ -2389,6 +2487,109 @@
       }
     });
   });
+
+  // ---------------- song mode ----------------
+  // chains the 4 save slots into an arrangement that auto-advances one
+  // slot per bar. Patterns only — bpm/swing/humanize never change mid-song,
+  // see applyPatternOnly. Bar-advance itself happens in onBarStart().
+  const SONG_STORE_KEY = 'ps1-song';
+  let songChain = [];
+  let songMode = false;
+  let songPos = 0;
+
+  function applyPatternOnly(state) {
+    const copy = { ...state };
+    delete copy.bpm; delete copy.swing; delete copy.humanize;
+    applyState(copy);
+  }
+
+  async function loadSong() {
+    try {
+      if (window.storage) {
+        const res = await window.storage.get(SONG_STORE_KEY);
+        if (res && res.value) songChain = JSON.parse(res.value);
+      }
+    } catch (err) { /* start fresh */ }
+    renderChainPreview();
+  }
+  async function persistSong() {
+    if (!storageOk) return;
+    try { await window.storage.set(SONG_STORE_KEY, JSON.stringify(songChain)); }
+    catch (err) { /* keep in-memory copy */ }
+  }
+  loadSong();
+
+  const chainOverlay = document.getElementById('chainOverlay');
+  const chainPreview = document.getElementById('chainPreview');
+  function renderChainPreview() {
+    chainPreview.textContent = songChain.length ? songChain.join(' · ') : '(empty)';
+  }
+  document.getElementById('chainBtn').addEventListener('pointerdown', e => {
+    e.preventDefault();
+    saveArmed = false;
+    saveBtn.classList.remove('armed');
+    chainOverlay.classList.add('on');
+  });
+  chainOverlay.addEventListener('pointerdown', e => {
+    if (e.target === chainOverlay) chainOverlay.classList.remove('on');
+  });
+  chainOverlay.querySelectorAll('[data-add]').forEach(btn => {
+    btn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      songChain.push(btn.dataset.add);
+      renderChainPreview();
+      persistSong();
+    });
+  });
+  document.getElementById('chainUndoBtn').addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    songChain.pop();
+    renderChainPreview();
+    persistSong();
+  });
+  document.getElementById('chainClearBtn').addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    songChain = [];
+    renderChainPreview();
+    persistSong();
+  });
+
+  const songBtn = document.getElementById('songBtn');
+  // finds the first populated slot at or after fromPos, wrapping at most
+  // once through the whole chain — undefined if nothing in it is saved
+  function firstPopulatedFrom(fromPos) {
+    for (let i = 0; i < songChain.length; i++) {
+      const pos = (fromPos + i) % songChain.length;
+      if (slots[songChain[pos]]) return pos;
+    }
+    return undefined;
+  }
+  songBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    unlock();
+    if (!songMode) {
+      if (songChain.length === 0) { toast('Build a chain first'); return; }
+      const pos = firstPopulatedFrom(0);
+      if (pos === undefined) { toast('Nothing saved in this chain yet'); return; }
+      songPos = pos;
+      applyPatternOnly(slots[songChain[songPos]]);
+      songMode = true;
+      songBtn.classList.add('on');
+      if (!playing) startSeq();
+      toast('Song mode on');
+    } else {
+      songMode = false;
+      songBtn.classList.remove('on');
+      toast('Song mode off');
+    }
+  });
+  function advanceSong() {
+    if (!songMode || songChain.length === 0) return;
+    const pos = firstPopulatedFrom((songPos + 1) % songChain.length);
+    if (pos === undefined) return; // nothing saved anywhere in the chain — leave current pattern alone
+    songPos = pos;
+    applyPatternOnly(slots[songChain[songPos]]);
+  }
 
   // ---------------- export / import ----------------
   const exportBtn = document.getElementById('exportBtn');
@@ -2512,7 +2713,12 @@
 
       ctx = offlineCtx;
       buildAudioGraph(offlineCtx);
+      // a live fill mid-flight must never leak into the export — force it
+      // off for the render, restore whatever was actually happening live after
+      const wasFillActive = fillActive;
+      fillActive = false;
       stepEvents.forEach(({ step, time }) => triggerStep(step, time));
+      fillActive = wasFillActive;
 
       const rendered = await offlineCtx.startRendering();
 
