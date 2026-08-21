@@ -159,7 +159,7 @@
 
   .panel { display: none; flex: 1; flex-direction: column; min-height: 0; }
   .panel.on { display: flex; }
-  #beatsPanel.on { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  #beatsPanel.on, #keysPanel.on { overflow-y: auto; -webkit-overflow-scrolling: touch; }
 
   .row-label { font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.5; margin: 10px 2px 5px; flex-shrink: 0; }
 
@@ -201,7 +201,7 @@
     touch-action: none;
   }
   .fine-btn:active { transform: translateY(1px); box-shadow: none; }
-  .bank-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+  .bank-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 8px; }
   .bank {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
@@ -307,6 +307,7 @@
   }
   .chip.on { background: var(--accent); color: #fff; opacity: 1; }
   .voice-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
+  .chord-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
   .track.harmony.armed .tname { color: var(--accent); font-weight: 700; }
   /* brief "a note just landed here" wash — only used in AUTO record mode,
      where the target voice isn't fixed like the manual .armed highlight */
@@ -314,7 +315,7 @@
   .track.harmony.flash::after {
     content: ''; position: absolute; inset: -2px 0; pointer-events: none;
     border-radius: 6px; background: var(--accent);
-    animation: rowFlash 0.5s ease-out;
+    animation: rowFlash 0.5s ease-out forwards;
   }
   @keyframes rowFlash { from { opacity: 0.32; } to { opacity: 0; } }
 
@@ -401,6 +402,7 @@
   .track.harmony .cell.on.ph, .track.harmony .cell.tie.ph { filter: brightness(1.25); }
   .track.acc .cell { aspect-ratio: 1 / 0.7; }
   .track.acc .cell.on { background: var(--ink); }
+  .track.acc .cell.hard { background: var(--accent); }
 
   .hint {
     text-align: center; font-size: 9px; letter-spacing: 0.12em;
@@ -467,6 +469,7 @@
       <button class="bank" data-bank="env">ENV</button>
       <button class="bank" data-bank="osc">OSC</button>
       <button class="bank" data-bank="lofi">LOFI</button>
+      <button class="bank" data-bank="drums">DRUMS</button>
     </div>
     <div class="knobs">
       <div class="knob-unit" data-slot="0">
@@ -531,6 +534,14 @@
       <button class="chip" data-voice="3">H4</button>
     </div>
 
+    <div class="chord-chips" id="chordChips">
+      <button class="chip on" data-chord="off">OFF</button>
+      <button class="chip" data-chord="maj">MAJ</button>
+      <button class="chip" data-chord="min">MIN</button>
+      <button class="chip" data-chord="dom7">7</button>
+      <button class="chip" data-chord="min7">m7</button>
+    </div>
+
     <div class="keyboard-wrap">
       <div class="keyboard" id="keyboard"></div>
       <div class="hint">Slide across keys · beats keep playing here</div>
@@ -556,6 +567,12 @@
       <span class="kname">Swing</span>
       <input type="range" id="swing" min="0" max="60" value="0">
       <span class="kval" id="swingVal">0%</span>
+    </div>
+
+    <div class="swing-row">
+      <span class="kname">Humanize</span>
+      <input type="range" id="humanize" min="0" max="100" value="0">
+      <span class="kval" id="humanizeVal">0%</span>
     </div>
 
     <div class="row-label">Groove · tap a feel, or drag Swing to taste</div>
@@ -718,6 +735,10 @@
     wow:     { v: 0.00, fmt: p => Math.round(p * 100) + '%' },
     crush:   { v: 0.00, fmt: p => Math.round(p * 100) + '%' },
     duck:    { v: 0.00, fmt: p => Math.round(p * 100) + '%' },
+    kickTune:  { v: 0.50,  fmt: p => Math.round((0.5 + p) * 100) + '%' },
+    kickDecay: { v: 0.34,  fmt: p => Math.round((0.15 + p * 0.5) * 1000) + 'ms' },
+    snareTone: { v: 0.375, fmt: p => Math.round(900 + p * 2400) + ' Hz' },
+    hatDecay:  { v: 0.375, fmt: p => Math.round((0.4 + p * 1.6) * 100) + '%' },
   };
 
   function makeImpulse(c, seconds, decay) {
@@ -991,12 +1012,14 @@
   function playKick(t, vel = 1) {
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
-    osc.frequency.setValueAtTime(160, t);
-    osc.frequency.exponentialRampToValueAtTime(48, t + 0.11);
+    const tuneMul = 0.5 + params.kickTune.v;
+    const decaySec = 0.15 + params.kickDecay.v * 0.5;
+    osc.frequency.setValueAtTime(160 * tuneMul, t);
+    osc.frequency.exponentialRampToValueAtTime(48 * tuneMul, t + 0.11);
     g.gain.setValueAtTime(1.0 * vel, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+    g.gain.exponentialRampToValueAtTime(0.001, t + decaySec);
     osc.connect(g); g.connect(chanNodes.Kick);
-    osc.start(t); osc.stop(t + 0.35);
+    osc.start(t); osc.stop(t + decaySec + 0.03);
     // sidechain "pump" — kick ducks the whole post-master mix, itself included
     if (params.duck.v > 0.01) {
       duckGain.gain.cancelScheduledValues(t);
@@ -1007,13 +1030,13 @@
   }
   function playSnare(t, vel = 1) {
     const n = ctx.createBufferSource(); n.buffer = noiseBuf;
-    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1800; bp.Q.value = 0.8;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900 + params.snareTone.v * 2400; bp.Q.value = 0.8;
     const ng = ctx.createGain();
     ng.gain.setValueAtTime(0.7 * vel, t);
     ng.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
     n.connect(bp); bp.connect(ng); ng.connect(chanNodes.Snare);
     n.start(t); n.stop(t + 0.2);
-    const o = ctx.createOscillator(); o.frequency.value = 190;
+    const o = ctx.createOscillator(); o.frequency.value = 100 + params.snareTone.v * 240;
     const og = ctx.createGain();
     og.gain.setValueAtTime(0.5 * vel, t);
     og.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
@@ -1033,23 +1056,25 @@
   }
   function playHat(t, vel = 1) {
     chokeOpenHats(t);
+    const decMul = 0.4 + params.hatDecay.v * 1.6;
     const n = ctx.createBufferSource(); n.buffer = noiseBuf;
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7500;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.4 * vel, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.05 * decMul);
     n.connect(hp); hp.connect(g); g.connect(chanNodes.CHat);
-    n.start(t); n.stop(t + 0.07);
+    n.start(t); n.stop(t + 0.07 * decMul);
   }
   function playOpenHat(t, vel = 1) {
+    const decMul = 0.4 + params.hatDecay.v * 1.6;
     const n = ctx.createBufferSource(); n.buffer = noiseBuf;
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 6800;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.35 * vel, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.4 * decMul);
     n.connect(hp); hp.connect(g); g.connect(chanNodes.OHat);
-    n.start(t); n.stop(t + 0.45);
-    openHats.push({ gain: g, until: t + 0.4 });
+    n.start(t); n.stop(t + 0.45 * decMul);
+    openHats.push({ gain: g, until: t + 0.4 * decMul });
   }
   function playClap(t, vel = 1) {
     [0, 0.012, 0.026].forEach((off, i, arr) => {
@@ -1121,10 +1146,15 @@
   // bass: -1 = off, else index into SCALE (minor pentatonic + octave)
   const SCALE = [0, 3, 5, 7, 10, 12];
   const SCALE_NAMES = ['C', 'Eb', 'F', 'G', 'Bb', 'C+'];
+  // chord mode: semitone offsets from the root, auto-voiced onto extra
+  // harmony voices from a single key tap
+  const CHORD_TYPES = { off: [], maj: [4, 7], min: [3, 7], dom7: [4, 7, 10], min7: [3, 7, 10] };
   const bassPattern = new Array(STEPS).fill(-1);
 
-  // accent: steps where all drums hit harder
-  const accentPattern = new Array(STEPS).fill(false);
+  // accent: 0 = off, 1 = normal (today's original 1.35x — kept at this
+  // index so legacy '1'-digit saves still sound the same), 2 = hard
+  const accentPattern = new Array(STEPS).fill(0);
+  const ACCENT_VEL = [1, 1.35, 1.6];
   // four independent harmony voices (H1-H4) — real four-part harmony, not a
   // chord-stack: each voice moves on its own. Per step: -1 = off, -2 = tie
   // (sustain — continue the previous note in this voice, don't retrigger),
@@ -1135,6 +1165,7 @@
 
   let bpm = 120;
   let swing = 0;
+  let humanize = 0;
   let playing = false;
   let currentStep = 0;
   let nextStepTime = 0;
@@ -1149,9 +1180,11 @@
   // fires the sounds for one step — shared by the live scheduler and the
   // offline WAV renderer, which doesn't want the UI/recording bookkeeping below
   function triggerStep(step, t) {
-    const vel = accentPattern[step] ? 1.35 : 1;
-    drumPattern.forEach((row, ti) => { if (row[step]) DRUMS[ti].play(t, vel); });
-    if (bassPattern[step] >= 0) playBass(t, SCALE[bassPattern[step]], vel);
+    const vel = ACCENT_VEL[accentPattern[step]];
+    const jitterT = () => (Math.random() - 0.5) * humanize * 0.016;
+    const jitterV = v => v * (1 + (Math.random() - 0.5) * humanize * 0.3);
+    drumPattern.forEach((row, ti) => { if (row[step]) DRUMS[ti].play(t + jitterT(), jitterV(vel)); });
+    if (bassPattern[step] >= 0) playBass(t + jitterT(), SCALE[bassPattern[step]], jitterV(vel));
     // each voice fires only on its own note-on steps (-2 ties are silent
     // here — they just mean "the previous note is still due to ring") and
     // sums the swing-adjusted duration of every consecutive tie that
@@ -1309,6 +1342,11 @@
     cell.classList.toggle('tie', val === -2);
     cell.querySelector('.nl').textContent = val >= 0 ? NOTE_NAMES[val % 12] : '';
   }
+  function renderAccCell(s) {
+    const v = accentPattern[s];
+    accCells[s].classList.toggle('on', v === 1);
+    accCells[s].classList.toggle('hard', v === 2);
+  }
 
   // sustain: while off (default), recording behaves exactly as before —
   // every note is a single-step blip. While on, a note's recorded length
@@ -1455,8 +1493,8 @@
       return;
     }
     if (el.dataset.acc) {
-      accentPattern[s] = !accentPattern[s];
-      el.classList.toggle('on', accentPattern[s]);
+      accentPattern[s] = (accentPattern[s] + 1) % 3;
+      renderAccCell(s);
       return;
     }
     const t = +el.dataset.t;
@@ -1555,6 +1593,16 @@
     swingChips.forEach(c => c.classList.toggle('on', +c.dataset.swing === v));
   }
   swingEl.addEventListener('input', () => setSwing(+swingEl.value));
+
+  const humanizeEl = document.getElementById('humanize');
+  const humanizeVal = document.getElementById('humanizeVal');
+  function setHumanize(v) {
+    humanize = v / 100;
+    humanizeEl.value = v;
+    humanizeVal.textContent = v + '%';
+  }
+  humanizeEl.addEventListener('input', () => setHumanize(+humanizeEl.value));
+
   swingChips.forEach(chip => {
     chip.addEventListener('pointerdown', e => {
       e.preventDefault();
@@ -1614,6 +1662,23 @@
       recordTargetVoice = chip.dataset.voice === 'auto' ? 'auto' : +chip.dataset.voice;
       voiceChips.forEach(c => c.classList.toggle('on', c === chip));
       updateArmedRow();
+    });
+  });
+
+  // chord mode: one key tap auto-voices a full chord across extra harmony
+  // voices. chordVoiceIds tracks, per actively-held real id (pointerId or
+  // 'kb'+code), the {id, offset} pairs of the extra voices it started —
+  // frozen at press time so changing the chord chip mid-hold can't leak a
+  // voice that release then fails to find and stop.
+  let chordType = 'off';
+  const chordVoiceIds = new Map();
+  const chordChips = document.querySelectorAll('.chord-chips .chip');
+  chordChips.forEach(chip => {
+    chip.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      unlock();
+      chordType = chip.dataset.chord;
+      chordChips.forEach(c => c.classList.toggle('on', c === chip));
     });
   });
 
@@ -1783,12 +1848,12 @@
             OHat:  '0010001000100010',
             Bass:  '..0...0...0...3.',
             Acc:   '1000000010000000',
-            bpm: 124, swing: 0,
+            bpm: 124, swing: 0, humanize: 0,
             H1: voice([{ at: 4, midi: 67 }, { at: 12, midi: 67 }]),
             H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'sawtooth',
-          knobs: { cutoff: 0.62, delay: 0.18, reverb: 0.35, drive: 0.15, attack: 0.05, decay: 0.28, sustain: 0.55, release: 0.22, detune: 0.22, glide: 0, lfoRate: 0.3, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0, duck: 0.35 },
+          knobs: { cutoff: 0.62, delay: 0.18, reverb: 0.35, drive: 0.15, attack: 0.05, decay: 0.28, sustain: 0.55, release: 0.22, detune: 0.22, glide: 0, lfoRate: 0.3, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0, duck: 0.35, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
         {
           id: 'techno', label: 'Techno',
@@ -1800,11 +1865,11 @@
             OHat:  '0010001000100010',
             Bass:  '0.0.0.0.0.0.3.5.',
             Acc:   '1000100010001000',
-            bpm: 132, swing: 0,
+            bpm: 132, swing: 0, humanize: 0,
             H1: NO_VOICE, H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'square',
-          knobs: { cutoff: 0.78, delay: 0.12, reverb: 0.2, drive: 0.35, attack: 0.02, decay: 0.18, sustain: 0.45, release: 0.12, detune: 0.28, glide: 0, lfoRate: 0.55, lfoDepth: 0.08, crackle: 0, wow: 0, crush: 0, duck: 0.3 },
+          knobs: { cutoff: 0.78, delay: 0.12, reverb: 0.2, drive: 0.35, attack: 0.02, decay: 0.18, sustain: 0.45, release: 0.12, detune: 0.28, glide: 0, lfoRate: 0.55, lfoDepth: 0.08, crackle: 0, wow: 0, crush: 0, duck: 0.3, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
         {
           id: 'deephouse', label: 'Deep House',
@@ -1816,12 +1881,12 @@
             OHat:  '0010001000100010',
             Bass:  '0.0.0.0.0.0.0.0.',
             Acc:   '0000000000000000',
-            bpm: 122, swing: 0,
+            bpm: 122, swing: 0, humanize: 0,
             H1: voice([{ at: 2, midi: 63, len: 3 }, { at: 10, midi: 65, len: 3 }]),
             H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'triangle',
-          knobs: { cutoff: 0.5, delay: 0.22, reverb: 0.5, drive: 0.08, attack: 0.08, decay: 0.35, sustain: 0.6, release: 0.4, detune: 0.15, glide: 0, lfoRate: 0.25, lfoDepth: 0.04, crackle: 0, wow: 0, crush: 0, duck: 0.25 },
+          knobs: { cutoff: 0.5, delay: 0.22, reverb: 0.5, drive: 0.08, attack: 0.08, decay: 0.35, sustain: 0.6, release: 0.4, detune: 0.15, glide: 0, lfoRate: 0.25, lfoDepth: 0.04, crackle: 0, wow: 0, crush: 0, duck: 0.25, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
       ],
     },
@@ -1838,12 +1903,12 @@
             OHat:  '0000001000000000',
             Bass:  '0......0..1.....',
             Acc:   '0000000000000000',
-            bpm: 90, swing: 35,
+            bpm: 90, swing: 35, humanize: 0,
             H1: voice([{ at: 8, midi: 60, len: 2 }]),
             H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'triangle',
-          knobs: { cutoff: 0.45, delay: 0.2, reverb: 0.4, drive: 0.1, attack: 0.1, decay: 0.4, sustain: 0.6, release: 0.35, detune: 0.18, glide: 0, lfoRate: 0.25, lfoDepth: 0.03, crackle: 0.15, wow: 0.1, crush: 0, duck: 0.15 },
+          knobs: { cutoff: 0.45, delay: 0.2, reverb: 0.4, drive: 0.1, attack: 0.1, decay: 0.4, sustain: 0.6, release: 0.35, detune: 0.18, glide: 0, lfoRate: 0.25, lfoDepth: 0.03, crackle: 0.15, wow: 0.1, crush: 0, duck: 0.15, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
         {
           id: 'trap', label: 'Trap',
@@ -1855,12 +1920,12 @@
             OHat:  '0000000000000010',
             Bass:  '0.........0..1..',
             Acc:   '1000000010000000',
-            bpm: 140, swing: 0,
+            bpm: 140, swing: 0, humanize: 0,
             H1: voice([{ at: 8, midi: 55, len: 2 }]),
             H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'square',
-          knobs: { cutoff: 0.38, delay: 0.15, reverb: 0.25, drive: 0.3, attack: 0.02, decay: 0.2, sustain: 0.5, release: 0.15, detune: 0.3, glide: 0.05, lfoRate: 0.3, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0.1, duck: 0.2 },
+          knobs: { cutoff: 0.38, delay: 0.15, reverb: 0.25, drive: 0.3, attack: 0.02, decay: 0.2, sustain: 0.5, release: 0.15, detune: 0.3, glide: 0.05, lfoRate: 0.3, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0.1, duck: 0.2, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
         {
           id: 'boombap', label: 'Boom Bap',
@@ -1872,12 +1937,12 @@
             OHat:  '0000000000000000',
             Bass:  '0.......3.......',
             Acc:   '0000000010000000',
-            bpm: 88, swing: 8,
+            bpm: 88, swing: 8, humanize: 0,
             H1: voice([{ at: 0, midi: 60 }, { at: 6, midi: 63 }, { at: 10, midi: 58 }]),
             H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'triangle',
-          knobs: { cutoff: 0.42, delay: 0.15, reverb: 0.3, drive: 0.15, attack: 0.03, decay: 0.25, sustain: 0.5, release: 0.2, detune: 0.15, glide: 0, lfoRate: 0.3, lfoDepth: 0.03, crackle: 0.3, wow: 0.15, crush: 0.1, duck: 0.15 },
+          knobs: { cutoff: 0.42, delay: 0.15, reverb: 0.3, drive: 0.15, attack: 0.03, decay: 0.25, sustain: 0.5, release: 0.2, detune: 0.15, glide: 0, lfoRate: 0.3, lfoDepth: 0.03, crackle: 0.3, wow: 0.15, crush: 0.1, duck: 0.15, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
       ],
     },
@@ -1894,12 +1959,12 @@
             OHat:  '0000000000000000',
             Bass:  '0...5...3...1...',
             Acc:   '0000100000001000',
-            bpm: 174, swing: 0,
+            bpm: 174, swing: 0, humanize: 0,
             H1: voice([{ at: 8, midi: 72 }]),
             H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'sawtooth',
-          knobs: { cutoff: 0.85, delay: 0.1, reverb: 0.15, drive: 0.2, attack: 0.01, decay: 0.12, sustain: 0.4, release: 0.1, detune: 0.25, glide: 0, lfoRate: 0.6, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0, duck: 0.15 },
+          knobs: { cutoff: 0.85, delay: 0.1, reverb: 0.15, drive: 0.2, attack: 0.01, decay: 0.12, sustain: 0.4, release: 0.1, detune: 0.25, glide: 0, lfoRate: 0.6, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0, duck: 0.15, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
         {
           id: 'dembow', label: 'Dembow',
@@ -1911,12 +1976,12 @@
             OHat:  '0000000000000000',
             Bass:  '0...0...0...0...',
             Acc:   '1000000010000000',
-            bpm: 95, swing: 0,
+            bpm: 95, swing: 0, humanize: 0,
             H1: voice([{ at: 4, midi: 64 }, { at: 12, midi: 64 }]),
             H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'square',
-          knobs: { cutoff: 0.55, delay: 0.25, reverb: 0.4, drive: 0.15, attack: 0.06, decay: 0.3, sustain: 0.55, release: 0.25, detune: 0.2, glide: 0, lfoRate: 0.35, lfoDepth: 0.04, crackle: 0, wow: 0, crush: 0, duck: 0.25 },
+          knobs: { cutoff: 0.55, delay: 0.25, reverb: 0.4, drive: 0.15, attack: 0.06, decay: 0.3, sustain: 0.55, release: 0.25, detune: 0.2, glide: 0, lfoRate: 0.35, lfoDepth: 0.04, crackle: 0, wow: 0, crush: 0, duck: 0.25, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
         {
           id: 'ukgarage', label: 'UK Garage',
@@ -1928,11 +1993,11 @@
             OHat:  '0000000100000001',
             Bass:  '..0.....3.......',
             Acc:   '0000000000000000',
-            bpm: 130, swing: 0,
+            bpm: 130, swing: 0, humanize: 0,
             H1: NO_VOICE, H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'square',
-          knobs: { cutoff: 0.72, delay: 0.15, reverb: 0.22, drive: 0.18, attack: 0.02, decay: 0.2, sustain: 0.45, release: 0.15, detune: 0.22, glide: 0, lfoRate: 0.4, lfoDepth: 0.03, crackle: 0, wow: 0, crush: 0, duck: 0.2 },
+          knobs: { cutoff: 0.72, delay: 0.15, reverb: 0.22, drive: 0.18, attack: 0.02, decay: 0.2, sustain: 0.45, release: 0.15, detune: 0.22, glide: 0, lfoRate: 0.4, lfoDepth: 0.03, crackle: 0, wow: 0, crush: 0, duck: 0.2, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
       ],
     },
@@ -1949,12 +2014,12 @@
             OHat:  '0000000000000100',
             Bass:  '0..3..0...5..3..',
             Acc:   '1000100010001000',
-            bpm: 102, swing: 25,
+            bpm: 102, swing: 25, humanize: 0,
             H1: voice([{ at: 0, midi: 60 }, { at: 6, midi: 64 }, { at: 10, midi: 67 }]),
             H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'sawtooth',
-          knobs: { cutoff: 0.68, delay: 0.15, reverb: 0.25, drive: 0.2, attack: 0.03, decay: 0.22, sustain: 0.5, release: 0.18, detune: 0.2, glide: 0, lfoRate: 0.4, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0, duck: 0.3 },
+          knobs: { cutoff: 0.68, delay: 0.15, reverb: 0.25, drive: 0.2, attack: 0.03, decay: 0.22, sustain: 0.5, release: 0.18, detune: 0.2, glide: 0, lfoRate: 0.4, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0, duck: 0.3, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
         {
           id: 'country', label: 'Country',
@@ -1966,12 +2031,12 @@
             OHat:  '0000000000000000',
             Bass:  '0.......3.......',
             Acc:   '1000000010000000',
-            bpm: 118, swing: 8,
+            bpm: 118, swing: 8, humanize: 0,
             H1: voice([{ at: 0, midi: 60 }, { at: 4, midi: 64 }, { at: 8, midi: 67 }, { at: 12, midi: 64 }]),
             H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'triangle',
-          knobs: { cutoff: 0.6, delay: 0.1, reverb: 0.25, drive: 0.12, attack: 0.02, decay: 0.25, sustain: 0.55, release: 0.2, detune: 0.15, glide: 0, lfoRate: 0.3, lfoDepth: 0.02, crackle: 0, wow: 0, crush: 0, duck: 0.1 },
+          knobs: { cutoff: 0.6, delay: 0.1, reverb: 0.25, drive: 0.12, attack: 0.02, decay: 0.25, sustain: 0.55, release: 0.2, detune: 0.15, glide: 0, lfoRate: 0.3, lfoDepth: 0.02, crackle: 0, wow: 0, crush: 0, duck: 0.1, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
         {
           id: 'blues', label: 'Blues',
@@ -1983,12 +2048,12 @@
             OHat:  '0000000000000000',
             Bass:  '0...3...5...3...',
             Acc:   '0000000000000000',
-            bpm: 82, swing: 24,
+            bpm: 82, swing: 24, humanize: 0,
             H1: voice([{ at: 6, midi: 65, len: 2 }, { at: 14, midi: 63, len: 2 }]),
             H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'square',
-          knobs: { cutoff: 0.5, delay: 0.15, reverb: 0.3, drive: 0.25, attack: 0.03, decay: 0.3, sustain: 0.55, release: 0.3, detune: 0.2, glide: 0.08, lfoRate: 0.25, lfoDepth: 0.04, crackle: 0.05, wow: 0, crush: 0, duck: 0.15 },
+          knobs: { cutoff: 0.5, delay: 0.15, reverb: 0.3, drive: 0.25, attack: 0.03, decay: 0.3, sustain: 0.55, release: 0.3, detune: 0.2, glide: 0.08, lfoRate: 0.25, lfoDepth: 0.04, crackle: 0.05, wow: 0, crush: 0, duck: 0.15, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
         {
           id: 'dirtyblues', label: 'Dirty Blues',
@@ -2000,12 +2065,12 @@
             OHat:  '0000000000000000',
             Bass:  '0.......5.......',
             Acc:   '1000000010000000',
-            bpm: 90, swing: 32,
+            bpm: 90, swing: 32, humanize: 0,
             H1: voice([{ at: 6, midi: 65, len: 2 }]),
             H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'square',
-          knobs: { cutoff: 0.32, delay: 0.15, reverb: 0.25, drive: 0.55, attack: 0.02, decay: 0.25, sustain: 0.5, release: 0.2, detune: 0.25, glide: 0.05, lfoRate: 0.3, lfoDepth: 0.05, crackle: 0.1, wow: 0, crush: 0.15, duck: 0.1 },
+          knobs: { cutoff: 0.32, delay: 0.15, reverb: 0.25, drive: 0.55, attack: 0.02, decay: 0.25, sustain: 0.5, release: 0.2, detune: 0.25, glide: 0.05, lfoRate: 0.3, lfoDepth: 0.05, crackle: 0.1, wow: 0, crush: 0.15, duck: 0.1, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
       ],
     },
@@ -2022,13 +2087,13 @@
             OHat:  '0000000000000000',
             Bass:  '0.......3.......',
             Acc:   '0000000000000000',
-            bpm: 73, swing: 16,
+            bpm: 73, swing: 16, humanize: 0,
             H1: voice([{ at: 0, midi: 60, len: 8 }, { at: 8, midi: 65, len: 8 }]),
             H2: voice([{ at: 4, midi: 72 }, { at: 12, midi: 69 }]),
             H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'sine',
-          knobs: { cutoff: 0.35, delay: 0.3, reverb: 0.6, drive: 0.05, attack: 0.25, decay: 0.4, sustain: 0.65, release: 0.55, detune: 0.18, glide: 0.05, lfoRate: 0.2, lfoDepth: 0.06, crackle: 0.35, wow: 0.3, crush: 0.05, duck: 0.1 },
+          knobs: { cutoff: 0.35, delay: 0.3, reverb: 0.6, drive: 0.05, attack: 0.25, decay: 0.4, sustain: 0.65, release: 0.55, detune: 0.18, glide: 0.05, lfoRate: 0.2, lfoDepth: 0.06, crackle: 0.35, wow: 0.3, crush: 0.05, duck: 0.1, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
         {
           id: 'lofirain', label: 'Lofi Rain',
@@ -2040,13 +2105,13 @@
             OHat:  '0000000000000000',
             Bass:  '0...............',
             Acc:   '0000000000000000',
-            bpm: 68, swing: 16,
+            bpm: 68, swing: 16, humanize: 0,
             H1: voice([{ at: 0, midi: 57, len: 12 }]),
             H2: voice([{ at: 8, midi: 65, len: 6 }]),
             H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'sine',
-          knobs: { cutoff: 0.28, delay: 0.35, reverb: 0.75, drive: 0.03, attack: 0.4, decay: 0.5, sustain: 0.7, release: 0.65, detune: 0.15, glide: 0.1, lfoRate: 0.15, lfoDepth: 0.08, crackle: 0.4, wow: 0.4, crush: 0.05, duck: 0.05 },
+          knobs: { cutoff: 0.28, delay: 0.35, reverb: 0.75, drive: 0.03, attack: 0.4, decay: 0.5, sustain: 0.7, release: 0.65, detune: 0.15, glide: 0.1, lfoRate: 0.15, lfoDepth: 0.08, crackle: 0.4, wow: 0.4, crush: 0.05, duck: 0.05, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
         {
           id: 'ambientdrift', label: 'Ambient Drift',
@@ -2058,13 +2123,55 @@
             OHat:  '0000000000000000',
             Bass:  '................',
             Acc:   '0000000000000000',
-            bpm: 60, swing: 0,
+            bpm: 60, swing: 0, humanize: 0,
             H1: voice([{ at: 0, midi: 55, len: 16 }]),
             H2: voice([{ at: 0, midi: 62, len: 16 }]),
             H3: NO_VOICE, H4: NO_VOICE,
           },
           wave: 'sine',
-          knobs: { cutoff: 0.3, delay: 0.25, reverb: 0.8, drive: 0.02, attack: 0.85, decay: 0.6, sustain: 0.75, release: 0.85, detune: 0.12, glide: 0.15, lfoRate: 0.12, lfoDepth: 0.5, crackle: 0.1, wow: 0.2, crush: 0, duck: 0 },
+          knobs: { cutoff: 0.3, delay: 0.25, reverb: 0.8, drive: 0.02, attack: 0.85, decay: 0.6, sustain: 0.75, release: 0.85, detune: 0.12, glide: 0.15, lfoRate: 0.12, lfoDepth: 0.5, crackle: 0.1, wow: 0.2, crush: 0, duck: 0, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
+        },
+      ],
+    },
+    {
+      label: 'Reggae & Jazz',
+      items: [
+        {
+          id: 'reggae', label: 'Reggae',
+          pattern: {
+            Kick:  '0000000010000000',
+            Snare: '0000000010000000',
+            Clap:  '0000000000000000',
+            CHat:  '0010001000100010',
+            OHat:  '0000000000000010',
+            Bass:  '0...0...3...0...',
+            Acc:   '0000000020000000',
+            bpm: 75, swing: 8, humanize: 25,
+            H1: voice([{ at: 2, midi: 60 }, { at: 6, midi: 60 }, { at: 10, midi: 60 }, { at: 14, midi: 60 }]),
+            H2: voice([{ at: 2, midi: 67 }, { at: 6, midi: 67 }, { at: 10, midi: 67 }, { at: 14, midi: 67 }]),
+            H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'square',
+          knobs: { cutoff: 0.55, delay: 0.15, reverb: 0.35, drive: 0.1, attack: 0.01, decay: 0.15, sustain: 0.35, release: 0.12, detune: 0.15, glide: 0, lfoRate: 0.3, lfoDepth: 0, crackle: 0, wow: 0, crush: 0, duck: 0.3, kickTune: 0.42, kickDecay: 0.4, snareTone: 0.3, hatDecay: 0.25 },
+        },
+        {
+          id: 'jazz', label: 'Jazz',
+          pattern: {
+            Kick:  '1000000000000000',
+            Snare: '0000010000000100',
+            Clap:  '0000000000000000',
+            CHat:  '1000101010001010',
+            OHat:  '0000000000000000',
+            Bass:  '0...2...3...4...',
+            Acc:   '1000000010000000',
+            bpm: 126, swing: 34, humanize: 35,
+            H1: voice([{ at: 0, midi: 62, len: 8 }, { at: 8, midi: 60, len: 8 }]),
+            H2: voice([{ at: 0, midi: 69, len: 4 }, { at: 4, midi: 65, len: 4 }, { at: 8, midi: 67, len: 4 }, { at: 12, midi: 64, len: 4 }]),
+            H3: voice([{ at: 6, midi: 74 }, { at: 14, midi: 72 }]),
+            H4: NO_VOICE,
+          },
+          wave: 'triangle',
+          knobs: { cutoff: 0.5, delay: 0.1, reverb: 0.4, drive: 0.05, attack: 0.12, decay: 0.35, sustain: 0.6, release: 0.4, detune: 0.1, glide: 0, lfoRate: 0.2, lfoDepth: 0, crackle: 0, wow: 0, crush: 0, duck: 0.05, kickTune: 0.5, kickDecay: 0.25, snareTone: 0.2, hatDecay: 0.65 },
         },
       ],
     },
@@ -2090,8 +2197,8 @@
     for (let s = 0; s < STEPS; s++) {
       bassPattern[s] = bstr[s] === '.' ? -1 : +bstr[s];
       renderBassCell(s);
-      accentPattern[s] = astr[s] === '1';
-      accCells[s].classList.toggle('on', accentPattern[s]);
+      accentPattern[s] = +astr[s] || 0;
+      renderAccCell(s);
       for (let v = 0; v < HARMONY_VOICES; v++) {
         harmonyPatterns[v][s] = Number.isFinite(harmonyArrs[v][s]) ? harmonyArrs[v][s] : -1;
         renderHarmonyCell(v, s);
@@ -2099,14 +2206,15 @@
     }
     if (state.bpm) setBpm(state.bpm);
     if (state.swing !== undefined) setSwing(state.swing);
+    if (state.humanize !== undefined) setHumanize(state.humanize);
   }
   function currentState() {
-    const state = { bpm, swing: Math.round(swing * 100) };
+    const state = { bpm, swing: Math.round(swing * 100), humanize: Math.round(humanize * 100) };
     DRUMS.forEach((trk, ti) => {
       state[trk.name] = drumPattern[ti].map(v => v ? '1' : '0').join('');
     });
     state.Bass = bassPattern.map(v => v < 0 ? '.' : String(v)).join('');
-    state.Acc = accentPattern.map(v => v ? '1' : '0').join('');
+    state.Acc = accentPattern.map(String).join('');
     for (let v = 0; v < HARMONY_VOICES; v++) {
       state['H' + (v + 1)] = harmonyPatterns[v].join(',');
     }
@@ -2209,8 +2317,8 @@
     });
     for (let s = 0; s < STEPS; s++) {
       if (Math.random() < 0.08) {
-        accentPattern[s] = !accentPattern[s];
-        accCells[s].classList.toggle('on', accentPattern[s]);
+        accentPattern[s] = (accentPattern[s] + 1) % 3;
+        renderAccCell(s);
       }
     }
     toast('Mutated');
@@ -2516,7 +2624,7 @@
 
   let lastFreq = null;
 
-  function startVoice(id, midi, keyEl) {
+  function startVoice(id, midi, keyEl, isChordExtra = false) {
     if (!ctx) return;
     stopVoice(id, true);
 
@@ -2543,7 +2651,7 @@
           voices.set(id, { oscs: [src], gain: g, keyEl, midi });
           keyEl.classList.add('held');
           keyEl.dataset.holds = (parseInt(keyEl.dataset.holds || 0) + 1);
-          noteReadout.textContent = 'PAD ' + (idx + 1);
+          if (!isChordExtra) noteReadout.textContent = 'PAD ' + (idx + 1);
         }
       }
       return;
@@ -2586,10 +2694,12 @@
     oscs.forEach(o => { o.connect(g); o.start(now); });
     g.connect(voiceBus);
     voices.set(id, { oscs, gain: g, keyEl, midi });
-    lastFreq = freq;
     keyEl.classList.add('held');
     keyEl.dataset.holds = (parseInt(keyEl.dataset.holds || 0) + 1);
-    noteReadout.textContent = keyEl.dataset.label + (Math.floor(midi / 12) - 1);
+    if (!isChordExtra) {
+      lastFreq = freq;
+      noteReadout.textContent = keyEl.dataset.label + (Math.floor(midi / 12) - 1);
+    }
   }
 
   function stopVoice(id, instant = false) {
@@ -2649,6 +2759,31 @@
   }
   function midiFor(keyEl) { return (octave + 1) * 12 + parseInt(keyEl.dataset.semi); }
 
+  // starts (and, in auto voice mode, records) the extra chord tones for a
+  // freshly-pressed key, freezing their {id, offset} pairs into
+  // chordVoiceIds under realId so release later stops exactly these voices
+  // regardless of any later chord-chip change. No-op outside pitched waves.
+  function startChordExtras(realId, rootMidi, keyEl) {
+    if (chordType === 'off' || currentWave === 'chop') return;
+    const extras = CHORD_TYPES[chordType].map((offset, i) => ({ id: realId + '#c' + i, offset }));
+    chordVoiceIds.set(realId, extras);
+    extras.forEach(({ id, offset }) => {
+      startVoice(id, rootMidi + offset, keyEl, true);
+      if (recordTargetVoice === 'auto') recordNote(rootMidi + offset, id);
+    });
+  }
+  function retriggerChordExtras(realId, rootMidi, keyEl) {
+    const extras = chordVoiceIds.get(realId);
+    if (extras) extras.forEach(({ id, offset }) => startVoice(id, rootMidi + offset, keyEl, true));
+  }
+  function stopChordExtras(realId) {
+    const extras = chordVoiceIds.get(realId);
+    if (extras) {
+      chordVoiceIds.delete(realId);
+      extras.forEach(({ id }) => { stopVoice(id); finishRecordNote(id); });
+    }
+  }
+
   keyboard.addEventListener('pointerdown', e => {
     e.preventDefault();
     unlock();
@@ -2657,15 +2792,24 @@
       const m = midiFor(k);
       startVoice(e.pointerId, m, k);
       recordNote(m, e.pointerId);
+      startChordExtras(e.pointerId, m, k);
     }
   });
   keyboard.addEventListener('pointermove', e => {
     if (!voices.has(e.pointerId)) return;
     const k = keyFromPoint(e.clientX, e.clientY);
     const v = voices.get(e.pointerId);
-    if (k && k !== v.keyEl) startVoice(e.pointerId, midiFor(k), k);
+    if (k && k !== v.keyEl) {
+      const m = midiFor(k);
+      startVoice(e.pointerId, m, k);
+      retriggerChordExtras(e.pointerId, m, k);
+    }
   });
-  const endPointer = e => { stopVoice(e.pointerId); finishRecordNote(e.pointerId); };
+  const endPointer = e => {
+    stopVoice(e.pointerId);
+    finishRecordNote(e.pointerId);
+    stopChordExtras(e.pointerId);
+  };
   keyboard.addEventListener('pointerup', endPointer);
   keyboard.addEventListener('pointercancel', endPointer);
   keyboard.addEventListener('pointerleave', endPointer);
@@ -2701,6 +2845,7 @@
     if (keyEl) {
       startVoice('kb' + e.code, midi, keyEl);
       recordNote(midi, 'kb' + e.code);
+      startChordExtras('kb' + e.code, midi, keyEl);
       kbHeld.add(e.code);
     }
   });
@@ -2708,6 +2853,7 @@
     if (kbHeld.has(e.code)) {
       stopVoice('kb' + e.code);
       finishRecordNote('kb' + e.code);
+      stopChordExtras('kb' + e.code);
       kbHeld.delete(e.code);
     }
   });
@@ -3006,12 +3152,14 @@
     env:  ['attack', 'decay', 'sustain', 'release'],
     osc:  ['detune', 'glide', 'lfoRate', 'lfoDepth'],
     lofi: ['crackle', 'wow', 'crush', 'duck'],
+    drums: ['kickTune', 'kickDecay', 'snareTone', 'hatDecay'],
   };
   const LABELS = {
     cutoff: 'Filter', delay: 'Delay', reverb: 'Reverb', drive: 'Drive',
     attack: 'Attack', decay: 'Decay', sustain: 'Sustain', release: 'Release',
     detune: 'Detune', glide: 'Glide', lfoRate: 'LFO Rate', lfoDepth: 'LFO Amt',
     crackle: 'Crackle', wow: 'Wow', crush: 'Crush', duck: 'Duck',
+    kickTune: 'Kick Tune', kickDecay: 'Kick Decay', snareTone: 'Snare Tone', hatDecay: 'Hat Decay',
   };
   let currentBank = 'main';
   let knobActive = false;
