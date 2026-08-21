@@ -345,6 +345,7 @@
     opacity: 0.5;
   }
   .slot-btn.has { opacity: 1; box-shadow: inset 0 0 0 2px var(--accent), 0 2px 0 rgba(0,0,0,0.18); }
+  .slot-btn.clear-confirm { background: #D8322F; color: #fff; opacity: 1; }
   .slot-btn:active { transform: translateY(1px); }
   .save-btn {
     font-family: 'IBM Plex Mono', monospace;
@@ -1009,7 +1010,13 @@
 
   function unlock() {
     initAudio();
-    if (ctx.state === 'suspended') ctx.resume();
+    // ctx briefly points at an OfflineAudioContext during exportWav's
+    // render, which starts 'suspended' too but throws on resume() (it
+    // isn't the autoplay-block kind of suspended) — any pointerdown/
+    // touchstart/mousedown during that window (the export button's own
+    // tap included, since this listens on the whole window) would
+    // otherwise crash the export
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* not resumable right now, e.g. mid-export */ } }
     iosAudioFix();
   }
   window.addEventListener('touchstart', unlock, { passive: true });
@@ -1017,7 +1024,7 @@
   window.addEventListener('mousedown', unlock);
   // resume audio when returning to the app (iOS suspends it in the background)
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && ctx && ctx.state === 'suspended') ctx.resume();
+    if (!document.hidden && ctx && ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* same as above */ } }
   });
 
   // ---------------- toast + help ----------------
@@ -1039,11 +1046,11 @@
   // ---------------- drum + bass synthesis ----------------
   const openHats = []; // {gain, until} for choke
 
-  function playKick(t, vel = 1) {
+  function playKick(t, vel = 1, accentLevel = 0) {
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
     const tuneMul = 0.5 + params.kickTune.v;
-    const decaySec = 0.15 + params.kickDecay.v * 0.5;
+    const decaySec = (0.15 + params.kickDecay.v * 0.5) * ACCENT_TIGHT[accentLevel];
     osc.frequency.setValueAtTime(160 * tuneMul, t);
     osc.frequency.exponentialRampToValueAtTime(48 * tuneMul, t + 0.11);
     g.gain.setValueAtTime(1.0 * vel, t);
@@ -1058,15 +1065,16 @@
       duckGain.gain.setTargetAtTime(1, t + 0.02, 0.05);
     }
   }
-  function playSnare(t, vel = 1) {
+  function playSnare(t, vel = 1, accentLevel = 0) {
+    const bright = ACCENT_BRIGHT[accentLevel];
     const n = ctx.createBufferSource(); n.buffer = noiseBuf;
-    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900 + params.snareTone.v * 2400; bp.Q.value = 0.8;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = (900 + params.snareTone.v * 2400) * bright; bp.Q.value = 0.8;
     const ng = ctx.createGain();
     ng.gain.setValueAtTime(0.7 * vel, t);
     ng.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
     n.connect(bp); bp.connect(ng); ng.connect(chanNodes.Snare);
     n.start(t); n.stop(t + 0.2);
-    const o = ctx.createOscillator(); o.frequency.value = 100 + params.snareTone.v * 240;
+    const o = ctx.createOscillator(); o.frequency.value = (100 + params.snareTone.v * 240) * bright;
     const og = ctx.createGain();
     og.gain.setValueAtTime(0.5 * vel, t);
     og.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
@@ -1084,9 +1092,9 @@
       if (oh.until < now) openHats.splice(i, 1);
     }
   }
-  function playHat(t, vel = 1) {
+  function playHat(t, vel = 1, accentLevel = 0) {
     chokeOpenHats(t);
-    const decMul = 0.4 + params.hatDecay.v * 1.6;
+    const decMul = (0.4 + params.hatDecay.v * 1.6) * ACCENT_TIGHT[accentLevel];
     const n = ctx.createBufferSource(); n.buffer = noiseBuf;
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7500;
     const g = ctx.createGain();
@@ -1095,8 +1103,8 @@
     n.connect(hp); hp.connect(g); g.connect(chanNodes.CHat);
     n.start(t); n.stop(t + 0.07 * decMul);
   }
-  function playOpenHat(t, vel = 1) {
-    const decMul = 0.4 + params.hatDecay.v * 1.6;
+  function playOpenHat(t, vel = 1, accentLevel = 0) {
+    const decMul = (0.4 + params.hatDecay.v * 1.6) * ACCENT_TIGHT[accentLevel];
     const n = ctx.createBufferSource(); n.buffer = noiseBuf;
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 6800;
     const g = ctx.createGain();
@@ -1173,9 +1181,9 @@
   ];
   const drumPattern = DRUMS.map(() => new Array(STEPS).fill(false));
 
-  // bass: -1 = off, else index into SCALE (minor pentatonic + octave)
-  const SCALE = [0, 3, 5, 7, 10, 12];
-  const SCALE_NAMES = ['C', 'Eb', 'F', 'G', 'Bb', 'C+'];
+  // bass: -1 = off, else index into SCALE (full chromatic octave, semitone
+  // 0-11 — names come from NOTE_NAMES below, same array harmony uses)
+  const SCALE = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
   // chord mode: semitone offsets from the root, auto-voiced onto extra
   // harmony voices from a single key tap
   const CHORD_TYPES = { off: [], maj: [4, 7], min: [3, 7], dom7: [4, 7, 10], min7: [3, 7, 10] };
@@ -1185,6 +1193,11 @@
   // index so legacy '1'-digit saves still sound the same), 2 = hard
   const accentPattern = new Array(STEPS).fill(0);
   const ACCENT_VEL = [1, 1.35, 1.6];
+  // the master limiter squashes most of a pure gain boost, so accent also
+  // reshapes envelope/tone — a limiter can't undo a shorter decay or a
+  // brighter tone the way it flattens gain
+  const ACCENT_TIGHT = [1, 0.93, 0.85];
+  const ACCENT_BRIGHT = [1, 1.06, 1.15];
   // four independent harmony voices (H1-H4) — real four-part harmony, not a
   // chord-stack: each voice moves on its own. Per step: -1 = off, -2 = tie
   // (sustain — continue the previous note in this voice, don't retrigger),
@@ -1232,7 +1245,7 @@
     const jitterV = v => v * (1 + (Math.random() - 0.5) * humanize * 0.3);
     drumPattern.forEach((row, ti) => {
       const src = (fillActive && step >= 12) ? fillOverride[ti] : row;
-      if (src[step]) DRUMS[ti].play(t + jitterT(), jitterV(vel));
+      if (src[step]) DRUMS[ti].play(t + jitterT(), jitterV(vel), accentPattern[step]);
     });
     if (bassPattern[step] >= 0) playBass(t + jitterT(), SCALE[bassPattern[step]], jitterV(vel));
     // each voice fires only on its own note-on steps (-2 ties are silent
@@ -1407,7 +1420,7 @@
   function renderBassCell(s) {
     const v = bassPattern[s];
     bassCells[s].classList.toggle('on', v >= 0);
-    bassCells[s].querySelector('.nl').textContent = v >= 0 ? SCALE_NAMES[v] : '';
+    bassCells[s].querySelector('.nl').textContent = v >= 0 ? NOTE_NAMES[v] : '';
   }
   function renderHarmonyCell(v, s) {
     const val = harmonyPatterns[v][s];
@@ -1531,10 +1544,28 @@
     trimHarmonyTies(v, s + 1);
   }
 
+  // tap-select: tapping an empty harmony cell places a note directly (no
+  // more live-recording-only entry), cycling through the chromatic octave
+  // on repeat taps of the same cell within a short window — mirrors Bass's
+  // tap-to-cycle. Rooted at the shared `octave` var the live keyboard uses,
+  // so shifting octave on the Keys panel also shifts what tapping here produces.
+  let harmonyPitchEdit = null; // { voice, step, timer } — cell still mid pitch-cycle
+  function harmonyChromaticNote(offset0to11) { return (octave + 1) * 12 + offset0to11; }
+  function armHarmonyPitchEdit(v, s) {
+    if (harmonyPitchEdit) clearTimeout(harmonyPitchEdit.timer);
+    const timer = setTimeout(() => { harmonyPitchEdit = null; }, 2000);
+    harmonyPitchEdit = { voice: v, step: s, timer };
+  }
+  function endHarmonyPitchEdit() {
+    if (harmonyPitchEdit) clearTimeout(harmonyPitchEdit.timer);
+    harmonyPitchEdit = null;
+  }
+
   // tap-vs-drag on a note-on cell can't be decided at pointerdown time —
-  // tapping clears the note, dragging across later empty cells extends its
-  // sustain — so the decision is deferred until pointerup/pointermove
-  let harmonyDrag = null; // { voice, originStep, boundaryStep, extended }
+  // tapping clears the note (or, mid a pitch-cycle session, advances it),
+  // dragging across later empty cells extends its sustain — so the
+  // decision is deferred until pointerup/pointermove
+  let harmonyDrag = null; // { voice, originStep, boundaryStep, extended, wasEmpty, cycleEligible }
 
   grid.addEventListener('pointerdown', e => {
     const el = e.target.closest('.cell');
@@ -1552,18 +1583,30 @@
       const v = +el.dataset.harmony;
       const val = harmonyPatterns[v][s];
       if (val === -2) { trimHarmonyTies(v, s); return; } // tie: trim immediately, no ambiguity
-      if (val === -1) return; // empty: no-op — manual pitch entry is out of scope
-      // note-on: defer — could still turn out to be a tap (clear) or a drag (extend).
-      // skip past this note's own already-tied steps first — re-grabbing an
-      // already-sustained note must be able to extend past its current end,
-      // not treat its own ties as someone else's territory
+      const wasEmpty = val === -1;
+      const cycleEligible = !wasEmpty && harmonyPitchEdit &&
+        harmonyPitchEdit.voice === v && harmonyPitchEdit.step === s;
+      if (wasEmpty) {
+        // place the octave-root note right away — a drag from here must
+        // still be able to extend it, so this doesn't wait for pointerup
+        harmonyPatterns[v][s] = harmonyChromaticNote(0);
+        renderHarmonyCell(v, s);
+        if (!playing) playSynthNote(ctx.currentTime + 0.01, harmonyPatterns[v][s], 0.3);
+        armHarmonyPitchEdit(v, s);
+      }
+      // note-on (freshly placed above, mid an active pitch-cycle session, or
+      // a long-standing note): defer — could still turn out to be a tap
+      // (clear/cycle) or a drag (extend). skip past this note's own
+      // already-tied steps first — re-grabbing an already-sustained note
+      // must be able to extend past its current end, not treat its own
+      // ties as someone else's territory
       let bs = s + 1;
       while (bs < STEPS && harmonyPatterns[v][bs] === -2) bs++;
       let boundary = STEPS;
       for (; bs < STEPS; bs++) {
         if (harmonyPatterns[v][bs] !== -1) { boundary = bs; break; }
       }
-      harmonyDrag = { voice: v, originStep: s, boundaryStep: boundary, extended: false };
+      harmonyDrag = { voice: v, originStep: s, boundaryStep: boundary, extended: false, wasEmpty, cycleEligible };
       return;
     }
     if (el.dataset.acc) {
@@ -1604,7 +1647,27 @@
   window.addEventListener('pointerup', () => {
     paintMode = null;
     if (harmonyDrag) {
-      if (!harmonyDrag.extended) clearHarmonyNote(harmonyDrag.voice, harmonyDrag.originStep);
+      const { voice, originStep, extended, wasEmpty, cycleEligible } = harmonyDrag;
+      if (extended) {
+        endHarmonyPitchEdit(); // dragging signals "done selecting pitch"
+      } else if (cycleEligible) {
+        const cur = harmonyPatterns[voice][originStep];
+        if (cur >= 0) { // defensive: something else may have stomped this cell since pointerdown
+          const nextOffset = (cur - (octave + 1) * 12) + 1;
+          if (nextOffset >= 12) {
+            harmonyPatterns[voice][originStep] = -1;
+            renderHarmonyCell(voice, originStep);
+            endHarmonyPitchEdit();
+          } else {
+            harmonyPatterns[voice][originStep] = harmonyChromaticNote(nextOffset);
+            renderHarmonyCell(voice, originStep);
+            if (!playing) playSynthNote(ctx.currentTime + 0.01, harmonyPatterns[voice][originStep], 0.3);
+            armHarmonyPitchEdit(voice, originStep);
+          }
+        }
+      } else if (!wasEmpty) {
+        clearHarmonyNote(voice, originStep);
+      } // wasEmpty && !cycleEligible: the root note placed at pointerdown just stands
       harmonyDrag = null;
     }
   });
@@ -2251,6 +2314,10 @@
     },
   ];
   function applyState(state) {
+    // any wholesale pattern swap (clear, groove/slot load, song-mode
+    // advance, import) invalidates a pending harmony pitch-cycle session —
+    // it may be pointing at a cell whose meaning just changed underneath it
+    endHarmonyPitchEdit();
     DRUMS.forEach((trk, ti) => {
       const str = state[trk.name] || '0'.repeat(STEPS);
       for (let s = 0; s < STEPS; s++) {
@@ -2269,7 +2336,7 @@
       return [];
     });
     for (let s = 0; s < STEPS; s++) {
-      bassPattern[s] = bstr[s] === '.' ? -1 : +bstr[s];
+      bassPattern[s] = bstr[s] === '.' ? -1 : parseInt(bstr[s], 16);
       renderBassCell(s);
       accentPattern[s] = +astr[s] || 0;
       renderAccCell(s);
@@ -2287,7 +2354,7 @@
     DRUMS.forEach((trk, ti) => {
       state[trk.name] = drumPattern[ti].map(v => v ? '1' : '0').join('');
     });
-    state.Bass = bassPattern.map(v => v < 0 ? '.' : String(v)).join('');
+    state.Bass = bassPattern.map(v => v < 0 ? '.' : v.toString(16)).join('');
     state.Acc = accentPattern.map(String).join('');
     for (let v = 0; v < HARMONY_VOICES; v++) {
       state['H' + (v + 1)] = harmonyPatterns[v].join(',');
@@ -2466,12 +2533,43 @@
     saveBtn.classList.toggle('armed', saveArmed);
     if (saveArmed) toast('Pick a slot to save into');
   });
+  // hold a populated slot (~500ms) to arm erasing it, then tap it again
+  // within 2s to confirm — same two-step safety net Clear Pattern already
+  // uses in the groove sheet, since unlike mute/solo this has no undo
+  function cancelClearArm(btn) {
+    if (!btn.classList.contains('clear-confirm')) return;
+    btn.classList.remove('clear-confirm');
+    btn.textContent = btn.dataset.slot;
+    clearTimeout(+btn.dataset.clearTimer);
+  }
   slotBtns.forEach(btn => {
+    let holdT = null, didHold = false;
     btn.addEventListener('pointerdown', e => {
       e.preventDefault();
       unlock();
       const key = btn.dataset.slot;
-      if (saveArmed) {
+      slotBtns.forEach(other => { if (other !== btn) cancelClearArm(other); });
+      didHold = false;
+      if (saveArmed || !slots[key]) return; // SAVE always wins; nothing to hold-clear if empty
+      holdT = setTimeout(() => {
+        didHold = true;
+        btn.classList.add('clear-confirm');
+        btn.textContent = '✕';
+        btn.dataset.clearTimer = setTimeout(() => cancelClearArm(btn), 2000);
+        toast('Tap again to erase slot ' + key);
+      }, 500);
+    });
+    btn.addEventListener('pointerup', e => {
+      clearTimeout(holdT);
+      if (didHold) return; // the hold itself already armed clear-confirm this tick
+      const key = btn.dataset.slot;
+      if (btn.classList.contains('clear-confirm')) {
+        cancelClearArm(btn);
+        delete slots[key];
+        refreshSlotUI();
+        persistSlots();
+        toast('Slot ' + key + ' cleared');
+      } else if (saveArmed) {
         slots[key] = currentState();
         saveArmed = false;
         saveBtn.classList.remove('armed');
@@ -2486,6 +2584,7 @@
         toast('Slot ' + key + ' is empty — tap SAVE first');
       }
     });
+    ['pointercancel', 'pointerleave'].forEach(ev => btn.addEventListener(ev, () => clearTimeout(holdT)));
   });
 
   // ---------------- song mode ----------------
