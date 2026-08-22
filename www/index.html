@@ -1008,15 +1008,27 @@
     };
   }
 
+  // ctx briefly points at an OfflineAudioContext during exportWav's
+  // render, which starts 'suspended' too but isn't the autoplay-block
+  // kind — resuming it is meaningless and can leave it in a state that
+  // breaks the render itself, not just throw a cosmetic error. Any
+  // pointerdown/touchstart/mousedown during that window (the export
+  // button's own tap included, since unlock() listens on the whole
+  // window) would otherwise race with the export. This can't be fixed by
+  // just catching resume()'s rejection (tried that — resume() sometimes
+  // rejects asynchronously, sometimes throws synchronously, and either
+  // way touching an offline context mid-render is the real problem, not
+  // just the error it happens to surface) — so unlock() is disabled
+  // outright for the export's duration via this flag instead of trying
+  // to infer safety from ctx.state, which is exactly the racy check that
+  // caused this in the first place.
+  let exporting = false;
   function unlock() {
+    if (exporting) return;
     initAudio();
-    // ctx briefly points at an OfflineAudioContext during exportWav's
-    // render, which starts 'suspended' too but throws on resume() (it
-    // isn't the autoplay-block kind of suspended) — any pointerdown/
-    // touchstart/mousedown during that window (the export button's own
-    // tap included, since this listens on the whole window) would
-    // otherwise crash the export
-    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* not resumable right now, e.g. mid-export */ } }
+    if (ctx.state === 'suspended') {
+      try { ctx.resume().catch(() => {}); } catch (e) { /* not resumable right now */ }
+    }
     iosAudioFix();
   }
   window.addEventListener('touchstart', unlock, { passive: true });
@@ -1024,7 +1036,10 @@
   window.addEventListener('mousedown', unlock);
   // resume audio when returning to the app (iOS suspends it in the background)
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && ctx && ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* same as above */ } }
+    if (exporting) return;
+    if (!document.hidden && ctx && ctx.state === 'suspended') {
+      try { ctx.resume().catch(() => {}); } catch (e) { /* same as above */ }
+    }
   });
 
   // ---------------- toast + help ----------------
@@ -1241,13 +1256,17 @@
   // offline WAV renderer, which doesn't want the UI/recording bookkeeping below
   function triggerStep(step, t) {
     const vel = ACCENT_VEL[accentPattern[step]];
-    const jitterT = () => (Math.random() - 0.5) * humanize * 0.016;
+    // clamped to 0: a negative jitter draw on a step already scheduled at
+    // (or near) t=0 — which is exactly the first step of an offline
+    // export's timeline — would otherwise push the time below zero and
+    // AudioParam.setValueAtTime throws on any negative time
+    const jitterT = () => Math.max(0, t + (Math.random() - 0.5) * humanize * 0.016);
     const jitterV = v => v * (1 + (Math.random() - 0.5) * humanize * 0.3);
     drumPattern.forEach((row, ti) => {
       const src = (fillActive && step >= 12) ? fillOverride[ti] : row;
-      if (src[step]) DRUMS[ti].play(t + jitterT(), jitterV(vel), accentPattern[step]);
+      if (src[step]) DRUMS[ti].play(jitterT(), jitterV(vel), accentPattern[step]);
     });
-    if (bassPattern[step] >= 0) playBass(t + jitterT(), SCALE[bassPattern[step]], jitterV(vel));
+    if (bassPattern[step] >= 0) playBass(jitterT(), SCALE[bassPattern[step]], jitterV(vel));
     // each voice fires only on its own note-on steps (-2 ties are silent
     // here — they just mean "the previous note is still due to ring") and
     // sums the swing-adjusted duration of every consecutive tie that
@@ -2025,6 +2044,40 @@
           wave: 'triangle',
           knobs: { cutoff: 0.5, delay: 0.22, reverb: 0.5, drive: 0.08, attack: 0.08, decay: 0.35, sustain: 0.6, release: 0.4, detune: 0.15, glide: 0, lfoRate: 0.25, lfoDepth: 0.04, crackle: 0, wow: 0, crush: 0, duck: 0.25, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
+        {
+          id: 'amapiano', label: 'Amapiano',
+          pattern: {
+            Kick:  '1000000010000000',
+            Snare: '0000000000000000',
+            Clap:  '0000100000001000',
+            CHat:  '1010101010101010',
+            OHat:  '0000000000000010',
+            Bass:  '0..0..7.9..3..0.',
+            Acc:   '1000000020000000',
+            bpm: 113, swing: 20, humanize: 10,
+            H1: voice([{ at: 0, midi: 60, len: 8 }, { at: 8, midi: 58, len: 8 }]),
+            H2: voice([{ at: 0, midi: 67, len: 8 }, { at: 8, midi: 65, len: 8 }]),
+            H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'triangle',
+          knobs: { cutoff: 0.45, delay: 0.15, reverb: 0.4, drive: 0.08, attack: 0.15, decay: 0.35, sustain: 0.65, release: 0.4, detune: 0.15, glide: 0, lfoRate: 0.2, lfoDepth: 0.06, crackle: 0.05, wow: 0.05, crush: 0, duck: 0.2, kickTune: 0.4, kickDecay: 0.4, snareTone: 0.3, hatDecay: 0.3 },
+        },
+        {
+          id: 'acidhouse', label: 'Acid House',
+          pattern: {
+            Kick:  '1000100010001000',
+            Snare: '0000000000000000',
+            Clap:  '0000100000001000',
+            CHat:  '1010101010101010',
+            OHat:  '0000001000000010',
+            Bass:  '0.0.3.0.7.5.3.0.',
+            Acc:   '1000000020000000',
+            bpm: 125, swing: 0, humanize: 0,
+            H1: NO_VOICE, H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sawtooth',
+          knobs: { cutoff: 0.55, delay: 0.12, reverb: 0.2, drive: 0.35, attack: 0.01, decay: 0.15, sustain: 0.3, release: 0.12, detune: 0.1, glide: 0, lfoRate: 0.4, lfoDepth: 0.1, crackle: 0, wow: 0, crush: 0, duck: 0.3, kickTune: 0.55, kickDecay: 0.25, snareTone: 0.375, hatDecay: 0.3 },
+        },
       ],
     },
     {
@@ -2081,6 +2134,41 @@
           wave: 'triangle',
           knobs: { cutoff: 0.42, delay: 0.15, reverb: 0.3, drive: 0.15, attack: 0.03, decay: 0.25, sustain: 0.5, release: 0.2, detune: 0.15, glide: 0, lfoRate: 0.3, lfoDepth: 0.03, crackle: 0.3, wow: 0.15, crush: 0.1, duck: 0.15, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
+        {
+          id: 'ukdrill', label: 'UK Drill',
+          pattern: {
+            Kick:  '1000000100100000',
+            Snare: '0000000010000000',
+            Clap:  '0000000000000000',
+            CHat:  '1010101011111010',
+            OHat:  '0000000000000010',
+            Bass:  '0ba9....765.....',
+            Acc:   '0000000020000000',
+            bpm: 140, swing: 0, humanize: 15,
+            H1: voice([{ at: 0, midi: 58, len: 4 }]),
+            H2: voice([{ at: 8, midi: 61 }]),
+            H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'square',
+          knobs: { cutoff: 0.35, delay: 0.1, reverb: 0.25, drive: 0.3, attack: 0.01, decay: 0.15, sustain: 0.4, release: 0.12, detune: 0.2, glide: 0.1, lfoRate: 0.3, lfoDepth: 0.03, crackle: 0, wow: 0, crush: 0, duck: 0.25, kickTune: 0.3, kickDecay: 0.45, snareTone: 0.3, hatDecay: 0.3 },
+        },
+        {
+          id: 'phonk', label: 'Phonk',
+          pattern: {
+            Kick:  '1000001000100000',
+            Snare: '0000000010000000',
+            Clap:  '0010001000100010',
+            CHat:  '1010101011111010',
+            OHat:  '0000000000000010',
+            Bass:  '0.......0...9...',
+            Acc:   '0020002000200020',
+            bpm: 135, swing: 0, humanize: 10,
+            H1: voice([{ at: 0, midi: 56, len: 16 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sawtooth',
+          knobs: { cutoff: 0.3, delay: 0.1, reverb: 0.35, drive: 0.45, attack: 0.01, decay: 0.2, sustain: 0.45, release: 0.15, detune: 0.25, glide: 0.05, lfoRate: 0.3, lfoDepth: 0.05, crackle: 0.1, wow: 0.05, crush: 0.1, duck: 0.2, kickTune: 0.25, kickDecay: 0.42, snareTone: 0.25, hatDecay: 0.35 },
+        },
       ],
     },
     {
@@ -2135,6 +2223,40 @@
           },
           wave: 'square',
           knobs: { cutoff: 0.72, delay: 0.15, reverb: 0.22, drive: 0.18, attack: 0.02, decay: 0.2, sustain: 0.45, release: 0.15, detune: 0.22, glide: 0, lfoRate: 0.4, lfoDepth: 0.03, crackle: 0, wow: 0, crush: 0, duck: 0.2, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
+        },
+        {
+          id: 'jungle', label: 'Jungle',
+          pattern: {
+            Kick:  '1000001000100000',
+            Snare: '0000100100001010',
+            Clap:  '0000000100000000',
+            CHat:  '1110111011101110',
+            OHat:  '0000000000000010',
+            Bass:  '0.......7...6...',
+            Acc:   '1000002000000000',
+            bpm: 165, swing: 0, humanize: 15,
+            H1: voice([{ at: 0, midi: 52, len: 16 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sawtooth',
+          knobs: { cutoff: 0.4, delay: 0.12, reverb: 0.3, drive: 0.25, attack: 0.01, decay: 0.15, sustain: 0.4, release: 0.12, detune: 0.2, glide: 0, lfoRate: 0.3, lfoDepth: 0.03, crackle: 0.05, wow: 0, crush: 0.05, duck: 0.15, kickTune: 0.4, kickDecay: 0.28, snareTone: 0.45, hatDecay: 0.3 },
+        },
+        {
+          id: 'dubstep', label: 'Dubstep',
+          pattern: {
+            Kick:  '1000000000100000',
+            Snare: '0000000010000000',
+            Clap:  '0000100000000000',
+            CHat:  '0010001000100010',
+            OHat:  '0000000000000000',
+            Bass:  '0.......0.8.0...',
+            Acc:   '0000000020000000',
+            bpm: 140, swing: 0, humanize: 5,
+            H1: voice([{ at: 0, midi: 50, len: 4 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'square',
+          knobs: { cutoff: 0.35, delay: 0.08, reverb: 0.3, drive: 0.4, attack: 0.01, decay: 0.25, sustain: 0.5, release: 0.2, detune: 0.3, glide: 0, lfoRate: 0.6, lfoDepth: 0.15, crackle: 0, wow: 0, crush: 0.05, duck: 0.2, kickTune: 0.3, kickDecay: 0.35, snareTone: 0.4, hatDecay: 0.25 },
         },
       ],
     },
@@ -2209,6 +2331,42 @@
           wave: 'square',
           knobs: { cutoff: 0.32, delay: 0.15, reverb: 0.25, drive: 0.55, attack: 0.02, decay: 0.25, sustain: 0.5, release: 0.2, detune: 0.25, glide: 0.05, lfoRate: 0.3, lfoDepth: 0.05, crackle: 0.1, wow: 0, crush: 0.15, duck: 0.1, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
+        {
+          id: 'afrobeat', label: 'Afrobeat',
+          pattern: {
+            Kick:  '1000001000100000',
+            Snare: '0000100000001000',
+            Clap:  '0010000000100000',
+            CHat:  '1101110111011101',
+            OHat:  '0000000000000010',
+            Bass:  '0..0..7.0..5..7.',
+            Acc:   '1000001000000000',
+            bpm: 112, swing: 18, humanize: 20,
+            H1: voice([{ at: 0, midi: 67, len: 2 }, { at: 8, midi: 67, len: 2 }]),
+            H2: voice([{ at: 2, midi: 64, len: 2 }, { at: 10, midi: 64, len: 2 }]),
+            H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sawtooth',
+          knobs: { cutoff: 0.65, delay: 0.15, reverb: 0.3, drive: 0.2, attack: 0.02, decay: 0.25, sustain: 0.5, release: 0.25, detune: 0.2, glide: 0, lfoRate: 0.35, lfoDepth: 0.04, crackle: 0, wow: 0, crush: 0, duck: 0.2, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.32 },
+        },
+        {
+          id: 'disco', label: 'Disco',
+          pattern: {
+            Kick:  '1000100010001000',
+            Snare: '0000100000001000',
+            Clap:  '0010001000100010',
+            CHat:  '1010101010101010',
+            OHat:  '0010001000100010',
+            Bass:  '0.7.0.9.5.7.0.3.',
+            Acc:   '2000000020000000',
+            bpm: 120, swing: 0, humanize: 8,
+            H1: voice([{ at: 2, midi: 64 }, { at: 6, midi: 64 }, { at: 10, midi: 64 }, { at: 14, midi: 64 }]),
+            H2: voice([{ at: 2, midi: 71 }, { at: 6, midi: 71 }, { at: 10, midi: 71 }, { at: 14, midi: 71 }]),
+            H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sawtooth',
+          knobs: { cutoff: 0.7, delay: 0.12, reverb: 0.3, drive: 0.12, attack: 0.02, decay: 0.2, sustain: 0.5, release: 0.2, detune: 0.25, glide: 0, lfoRate: 0.4, lfoDepth: 0.05, crackle: 0, wow: 0, crush: 0, duck: 0.3, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.42, hatDecay: 0.3 },
+        },
       ],
     },
     {
@@ -2268,6 +2426,42 @@
           wave: 'sine',
           knobs: { cutoff: 0.3, delay: 0.25, reverb: 0.8, drive: 0.02, attack: 0.85, decay: 0.6, sustain: 0.75, release: 0.85, detune: 0.12, glide: 0.15, lfoRate: 0.12, lfoDepth: 0.5, crackle: 0.1, wow: 0.2, crush: 0, duck: 0, kickTune: 0.5, kickDecay: 0.34, snareTone: 0.375, hatDecay: 0.375 },
         },
+        {
+          id: 'triphop', label: 'Trip-Hop',
+          pattern: {
+            Kick:  '1000000000100000',
+            Snare: '0000000010000000',
+            Clap:  '0000000000000000',
+            CHat:  '1000100010001000',
+            OHat:  '0000000000000010',
+            Bass:  '0.......3...8...',
+            Acc:   '0000000010000000',
+            bpm: 85, swing: 20, humanize: 30,
+            H1: voice([{ at: 0, midi: 58, len: 8 }, { at: 8, midi: 56, len: 8 }]),
+            H2: voice([{ at: 6, midi: 70, len: 2 }]),
+            H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sine',
+          knobs: { cutoff: 0.32, delay: 0.25, reverb: 0.55, drive: 0.08, attack: 0.15, decay: 0.35, sustain: 0.6, release: 0.45, detune: 0.15, glide: 0.05, lfoRate: 0.15, lfoDepth: 0.05, crackle: 0.2, wow: 0.15, crush: 0.05, duck: 0.15, kickTune: 0.42, kickDecay: 0.4, snareTone: 0.28, hatDecay: 0.35 },
+        },
+        {
+          id: 'synthwave', label: 'Synthwave',
+          pattern: {
+            Kick:  '1000100010001000',
+            Snare: '0000100000001000',
+            Clap:  '0000100000001000',
+            CHat:  '1010101010101010',
+            OHat:  '0010001000100010',
+            Bass:  '07b707b73a0a3a0a',
+            Acc:   '1000000010000000',
+            bpm: 100, swing: 0, humanize: 5,
+            H1: voice([{ at: 0, midi: 64, len: 4 }, { at: 8, midi: 69, len: 4 }]),
+            H2: voice([{ at: 4, midi: 76, len: 2 }]),
+            H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sawtooth',
+          knobs: { cutoff: 0.75, delay: 0.2, reverb: 0.35, drive: 0.15, attack: 0.02, decay: 0.15, sustain: 0.4, release: 0.15, detune: 0.25, glide: 0, lfoRate: 0.5, lfoDepth: 0.08, crackle: 0, wow: 0, crush: 0, duck: 0.25, kickTune: 0.5, kickDecay: 0.2, snareTone: 0.55, hatDecay: 0.2 },
+        },
       ],
     },
     {
@@ -2309,6 +2503,41 @@
           },
           wave: 'triangle',
           knobs: { cutoff: 0.5, delay: 0.1, reverb: 0.4, drive: 0.05, attack: 0.12, decay: 0.35, sustain: 0.6, release: 0.4, detune: 0.1, glide: 0, lfoRate: 0.2, lfoDepth: 0, crackle: 0, wow: 0, crush: 0, duck: 0.05, kickTune: 0.5, kickDecay: 0.25, snareTone: 0.2, hatDecay: 0.65 },
+        },
+        {
+          id: 'dub', label: 'Dub',
+          pattern: {
+            Kick:  '0000000010000000',
+            Snare: '0000000010000000',
+            Clap:  '0000000000000000',
+            CHat:  '0000001000000010',
+            OHat:  '0000000000100000',
+            Bass:  '0.......0.......',
+            Acc:   '0000000020000000',
+            bpm: 75, swing: 8, humanize: 15,
+            H1: voice([{ at: 2, midi: 55, len: 2 }]),
+            H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'sine',
+          knobs: { cutoff: 0.4, delay: 0.7, reverb: 0.75, drive: 0.1, attack: 0.02, decay: 0.3, sustain: 0.4, release: 0.3, detune: 0.12, glide: 0, lfoRate: 0.2, lfoDepth: 0.03, crackle: 0, wow: 0.1, crush: 0, duck: 0.35, kickTune: 0.35, kickDecay: 0.45, snareTone: 0.25, hatDecay: 0.35 },
+        },
+        {
+          id: 'bossanova', label: 'Bossa Nova',
+          pattern: {
+            Kick:  '1000000010000000',
+            Snare: '0000001000000010',
+            Clap:  '0000000000000000',
+            CHat:  '1010101010101010',
+            OHat:  '0000000000000000',
+            Bass:  '0...7...5...9...',
+            Acc:   '1000000000000000',
+            bpm: 126, swing: 20, humanize: 12,
+            H1: voice([{ at: 2, midi: 64, len: 2 }, { at: 9, midi: 62, len: 2 }]),
+            H2: voice([{ at: 6, midi: 69, len: 2 }, { at: 13, midi: 67, len: 2 }]),
+            H3: NO_VOICE, H4: NO_VOICE,
+          },
+          wave: 'triangle',
+          knobs: { cutoff: 0.5, delay: 0.12, reverb: 0.35, drive: 0.05, attack: 0.15, decay: 0.3, sustain: 0.55, release: 0.3, detune: 0.12, glide: 0.05, lfoRate: 0.2, lfoDepth: 0.03, crackle: 0, wow: 0, crush: 0, duck: 0.1, kickTune: 0.45, kickDecay: 0.34, snareTone: 0.3, hatDecay: 0.35 },
         },
       ],
     },
@@ -2779,6 +3008,9 @@
   async function exportWav() {
     if (exportWavBtn.disabled) return;
     exportWavBtn.disabled = true;
+    exporting = true; // must be set before this synchronous run yields, so
+                       // unlock() (which fires on this same tap, bubbling
+                       // to window) sees it before ctx gets swapped below
     const prevLabel = exportWavBtn.textContent;
     exportWavBtn.textContent = '…RENDERING';
     try {
@@ -2841,8 +3073,10 @@
       URL.revokeObjectURL(url);
       toast('WAV exported');
     } catch (err) {
+      console.error('exportWav failed:', err);
       toast('Could not render audio');
     } finally {
+      exporting = false;
       exportWavBtn.disabled = false;
       exportWavBtn.textContent = prevLabel;
     }
