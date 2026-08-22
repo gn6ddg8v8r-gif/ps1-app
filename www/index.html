@@ -145,6 +145,8 @@
     font-size: 10px; letter-spacing: 0.12em;
     color: var(--screen-glow); opacity: 0.85; margin-bottom: 3px;
   }
+  .mode-indicator { display: none; color: var(--accent); font-weight: 700; }
+  .mode-indicator.on { display: inline; }
   #scope { width: 100%; height: 46px; display: block; }
 
   .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; flex-shrink: 0; }
@@ -434,6 +436,9 @@
     <div class="screen-top">
       <span id="patchName">SAWTOOTH</span>
       <span id="bpmReadout">120 BPM</span>
+      <span id="songIndicator" class="mode-indicator">SONG</span>
+      <span id="chordIndicator" class="mode-indicator">CHORD</span>
+      <span id="sustainIndicator" class="mode-indicator">SUS</span>
       <span id="noteReadout">—</span>
     </div>
     <canvas id="scope"></canvas>
@@ -618,6 +623,9 @@
     <div class="io-row">
       <button class="io-btn" id="chainBtn">🔗 CHAIN</button>
       <button class="io-btn" id="songBtn">▶ SONG</button>
+    </div>
+    <div class="io-row single">
+      <button class="io-btn" id="exportSongWavBtn">⇩ EXPORT SONG WAV</button>
     </div>
 
     <div class="row-label">File · export saves the current pattern</div>
@@ -1793,11 +1801,13 @@
   });
 
   const sustainBtn = document.getElementById('sustainBtn');
+  const sustainIndicator = document.getElementById('sustainIndicator');
   sustainBtn.addEventListener('pointerdown', e => {
     e.preventDefault();
     unlock();
     sustainMode = !sustainMode;
     sustainBtn.classList.toggle('on', sustainMode);
+    sustainIndicator.classList.toggle('on', sustainMode);
     toast(sustainMode ? 'Sustain on — hold notes to record their length' : 'Sustain off');
   });
 
@@ -1829,12 +1839,14 @@
   let chordType = 'off';
   const chordVoiceIds = new Map();
   const chordChips = document.querySelectorAll('.chord-chips .chip');
+  const chordIndicator = document.getElementById('chordIndicator');
   chordChips.forEach(chip => {
     chip.addEventListener('pointerdown', e => {
       e.preventDefault();
       unlock();
       chordType = chip.dataset.chord;
       chordChips.forEach(c => c.classList.toggle('on', c === chip));
+      chordIndicator.classList.toggle('on', chordType !== 'off');
     });
   });
 
@@ -2883,6 +2895,7 @@
   });
 
   const songBtn = document.getElementById('songBtn');
+  const songIndicator = document.getElementById('songIndicator');
   // finds the first populated slot at or after fromPos, wrapping at most
   // once through the whole chain — undefined if nothing in it is saved
   function firstPopulatedFrom(fromPos) {
@@ -2903,11 +2916,13 @@
       applyPatternOnly(slots[songChain[songPos]]);
       songMode = true;
       songBtn.classList.add('on');
+      songIndicator.classList.add('on');
       if (!playing) startSeq();
       toast('Song mode on');
     } else {
       songMode = false;
       songBtn.classList.remove('on');
+      songIndicator.classList.remove('on');
       toast('Song mode off');
     }
   });
@@ -3003,10 +3018,83 @@
   }
 
   const WAV_EXPORT_BARS = 4;
+  const SONG_EXPORT_MAX_BARS = 64;
   const exportWavBtn = document.getElementById('exportWavBtn');
+  const exportSongWavBtn = document.getElementById('exportSongWavBtn');
+
+  function oneBarDur() {
+    let d = 0;
+    for (let step = 0; step < STEPS; step++) {
+      let s = stepDur();
+      s *= step % 2 === 0 ? (1 + swing) : (1 - swing);
+      d += s;
+    }
+    return d;
+  }
+
+  // shared offline-render core for both exports: builds an OfflineAudioContext
+  // sized for totalDurSec, swaps the live graph out for it, lets triggerAllFn
+  // schedule whatever it needs against the offline graph, renders, restores
+  // the live graph, then downloads the result as a WAV. The swap/render/
+  // restore sequence gets its own try/finally (independent of the caller's
+  // own try/catch) so a failure partway through still restores ctx — without
+  // this, an exception between the swap and the restore-destructuring left
+  // ctx pointed at a dead offline context permanently, breaking all further
+  // playback until reload.
+  async function renderOffline(totalDurSec, triggerAllFn, filenamePrefix) {
+    const tail = 2.5; // let reverb/delay/release ring out past the last step
+    const sr = ctx ? ctx.sampleRate : 44100;
+    const OfflineCtor = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const offlineCtx = new OfflineCtor(2, Math.ceil((totalDurSec + tail) * sr), sr);
+
+    // swap the live graph out for an offline one, render, then restore it —
+    // buildAudioGraph() assigns onto these same shared variables
+    const saved = {
+      ctx, filter, delayNode, delayFeedback, delayWet, reverbNode, reverbWet,
+      dryGain, master, analyser, drumBus, drumVerbSend, bassBus, noiseBuf,
+      voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain,
+      duckGain, crushShaper, crushDry, crushWet,
+      wowDelay, wowLfo, wowLfoGain, flutterLfo, flutterLfoGain,
+      crackleBuf, crackleSrc, crackleFilt1, crackleFilt2, crackleGain,
+      chanNodes: { ...chanNodes },
+    };
+
+    let rendered;
+    try {
+      ctx = offlineCtx;
+      buildAudioGraph(offlineCtx);
+      // a live fill mid-flight must never leak into the export — force it
+      // off for the render, restore whatever was actually happening live after
+      const wasFillActive = fillActive;
+      fillActive = false;
+      triggerAllFn(); // runs AFTER the swap, so it schedules against offlineCtx
+      fillActive = wasFillActive;
+
+      rendered = await offlineCtx.startRendering();
+    } finally {
+      ({ ctx, filter, delayNode, delayFeedback, delayWet, reverbNode, reverbWet,
+        dryGain, master, analyser, drumBus, drumVerbSend, bassBus, noiseBuf,
+        voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain,
+        duckGain, crushShaper, crushDry, crushWet,
+        wowDelay, wowLfo, wowLfoGain, flutterLfo, flutterLfoGain,
+        crackleBuf, crackleSrc, crackleFilt1, crackleFilt2, crackleGain } = saved);
+      Object.assign(chanNodes, saved.chanNodes);
+    }
+
+    const blob = audioBufferToWavBlob(rendered);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    a.href = url;
+    a.download = `${filenamePrefix}-${stamp}.wav`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 
   async function exportWav() {
-    if (exportWavBtn.disabled) return;
+    if (exporting || exportWavBtn.disabled) return;
     exportWavBtn.disabled = true;
     exporting = true; // must be set before this synchronous run yields, so
                        // unlock() (which fires on this same tap, bubbling
@@ -3025,52 +3113,7 @@
           dur += d;
         }
       }
-      const tail = 2.5; // let reverb/delay/release ring out past the last step
-      const sr = ctx ? ctx.sampleRate : 44100;
-      const OfflineCtor = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-      const offlineCtx = new OfflineCtor(2, Math.ceil((dur + tail) * sr), sr);
-
-      // swap the live graph out for an offline one, render, then restore it —
-      // buildAudioGraph() assigns onto these same shared variables
-      const saved = {
-        ctx, filter, delayNode, delayFeedback, delayWet, reverbNode, reverbWet,
-        dryGain, master, analyser, drumBus, drumVerbSend, bassBus, noiseBuf,
-        voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain,
-        duckGain, crushShaper, crushDry, crushWet,
-        wowDelay, wowLfo, wowLfoGain, flutterLfo, flutterLfoGain,
-        crackleBuf, crackleSrc, crackleFilt1, crackleFilt2, crackleGain,
-        chanNodes: { ...chanNodes },
-      };
-
-      ctx = offlineCtx;
-      buildAudioGraph(offlineCtx);
-      // a live fill mid-flight must never leak into the export — force it
-      // off for the render, restore whatever was actually happening live after
-      const wasFillActive = fillActive;
-      fillActive = false;
-      stepEvents.forEach(({ step, time }) => triggerStep(step, time));
-      fillActive = wasFillActive;
-
-      const rendered = await offlineCtx.startRendering();
-
-      ({ ctx, filter, delayNode, delayFeedback, delayWet, reverbNode, reverbWet,
-        dryGain, master, analyser, drumBus, drumVerbSend, bassBus, noiseBuf,
-        voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain,
-        duckGain, crushShaper, crushDry, crushWet,
-        wowDelay, wowLfo, wowLfoGain, flutterLfo, flutterLfoGain,
-        crackleBuf, crackleSrc, crackleFilt1, crackleFilt2, crackleGain } = saved);
-      Object.assign(chanNodes, saved.chanNodes);
-
-      const blob = audioBufferToWavBlob(rendered);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-      a.href = url;
-      a.download = `ps1-groove-${stamp}.wav`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await renderOffline(dur, () => stepEvents.forEach(({ step, time }) => triggerStep(step, time)), 'ps1-groove');
       toast('WAV exported');
     } catch (err) {
       console.error('exportWav failed:', err);
@@ -3084,6 +3127,54 @@
   exportWavBtn.addEventListener('pointerdown', e => {
     e.preventDefault();
     exportWav();
+  });
+
+  async function exportSongWav() {
+    if (exporting || exportSongWavBtn.disabled) return;
+    if (songChain.length === 0) { toast('Build a chain first'); return; }
+    const populated = songChain.filter(k => slots[k]);
+    if (populated.length === 0) { toast('Nothing saved in this chain yet'); return; }
+    if (populated.length > SONG_EXPORT_MAX_BARS) { toast('Chain too long to export (max ' + SONG_EXPORT_MAX_BARS + ' bars)'); return; }
+
+    exportSongWavBtn.disabled = true;
+    exporting = true;
+    const prevLabel = exportSongWavBtn.textContent;
+    exportSongWavBtn.textContent = '…RENDERING';
+    const savedPattern = currentState();
+    try {
+      const bar = oneBarDur(); // bpm/swing are constant across the whole
+                                // chain by design, so total duration needs
+                                // no pattern application to compute
+      const totalDur = bar * populated.length;
+
+      const triggerAll = () => {
+        let t = 0;
+        for (const key of populated) {
+          applyPatternOnly(slots[key]);
+          for (let step = 0; step < STEPS; step++) {
+            triggerStep(step, t);
+            let d = stepDur();
+            d *= step % 2 === 0 ? (1 + swing) : (1 - swing);
+            t += d;
+          }
+        }
+      };
+
+      await renderOffline(totalDur, triggerAll, 'ps1-song');
+      toast('Song WAV exported');
+    } catch (err) {
+      console.error('exportSongWav failed:', err);
+      toast('Could not render song');
+    } finally {
+      applyPatternOnly(savedPattern);
+      exporting = false;
+      exportSongWavBtn.disabled = false;
+      exportSongWavBtn.textContent = prevLabel;
+    }
+  }
+  exportSongWavBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    exportSongWav();
   });
 
   // ---------------- tabs ----------------
