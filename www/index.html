@@ -49,12 +49,23 @@
   }
 
   .plate { display: flex; align-items: baseline; justify-content: space-between; padding: 4px 2px 8px; }
-  .plate-side { display: flex; align-items: center; gap: 10px; }
+  .plate-side { display: flex; align-items: center; gap: 10px; position: relative; }
   .help-btn {
     font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600;
     width: 24px; height: 24px; border: none; border-radius: 50%;
     background: var(--key-black); color: var(--key-white);
   }
+  #saveMenuBtn { display: none; }
+  .save-menu {
+    position: absolute; top: calc(100% + 8px); right: 0;
+    width: 288px;
+    max-height: calc(100vh - 80px); overflow-y: auto;
+    background: var(--casing); border-radius: 12px; padding: 14px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.28), inset 0 0 0 1px rgba(0,0,0,0.06);
+    z-index: 40; display: none;
+  }
+  .save-menu.on { display: block; }
+  .mix-knob-wrap { display: none; }
   .overlay {
     position: fixed; inset: 0; background: rgba(18,18,16,0.94);
     z-index: 50; display: none; padding: 36px 26px; color: #EDEBE4;
@@ -102,32 +113,99 @@
 
   /* ---------- desktop / iPad landscape: two columns, no tabs ---------- */
   @media (min-width: 1000px) {
-    body { padding: 24px 0; }
+    body { padding: 24px 0; align-items: flex-start; }
     .device {
-      max-width: 980px;
+      max-width: 1240px;
       height: auto;
       min-height: calc(100dvh - 48px);
       border-radius: 18px;
       overflow: visible;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      grid-template-rows: auto auto 1fr;
+      grid-template-rows: auto auto auto;
       grid-template-areas:
         "plate plate"
         "screen screen"
         "keys beats";
       column-gap: 28px;
       align-content: start;
+      align-items: start;
     }
     .plate { grid-area: plate; }
     .screen { grid-area: screen; }
-    .tabs { display: none; }
+    .tabs { display: none !important; }
     .panel { display: flex !important; }
+    .subtabs { display: none !important; }
+    .subpanel { display: flex !important; flex: none !important; overflow-y: visible !important; }
     #keysPanel { grid-area: keys; }
-    #beatsPanel { grid-area: beats; overflow-y: visible; }
-    .keyboard-wrap { min-height: 260px; }
-    .knob { width: 64px; height: 64px; }
-    .knob .pointer { height: 19px; transform-origin: 50% 26px; }
+
+    #beatsPanel {
+      grid-area: beats;
+      overflow-y: visible;
+      display: grid !important;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto auto auto;
+      grid-template-areas:
+        "grid grid"
+        "feel feel"
+        "hint hint";
+      column-gap: 12px;
+      row-gap: 4px;
+      align-items: start;
+    }
+    #beatsGrid { grid-area: grid; }
+    #beatsFeel { grid-area: feel; }
+    #beatsPanel > .hint { grid-area: hint; }
+
+    .keyboard-wrap { min-height: 280px !important; margin-top: 4px !important; }
+    .knob:not(.mini) { width: 64px !important; height: 64px !important; }
+    .knob:not(.mini) .pointer { height: 19px !important; transform-origin: 50% 26px !important; }
+
+    #saveMenuBtn { display: flex; align-items: center; justify-content: center; }
+
+    .transport { gap: 8px !important; }
+    .play-btn { height: 32px !important; font-size: 12px !important; }
+    .rec-btn { height: 32px !important; }
+    #chainBtn, #songBtn {
+      flex: 0 0 auto;
+      height: 32px !important; padding: 0 10px !important; font-size: 9px !important;
+      white-space: nowrap;
+    }
+
+    .fader { display: none; }
+    .mix-knob-wrap { display: block; }
+
+    /* spacing tightened just enough to reach zero scroll at realistic
+       laptop heights (900px+) — no protected element (pattern grid,
+       keyboard floor) resized beyond what's already set above.
+       !important throughout: these sit before their own base-rule
+       counterparts later in this stylesheet, same as everything else
+       in this block. */
+    .row-label { margin: 6px 2px 3px !important; }
+    .grid { gap: 3px !important; margin-top: 4px !important; }
+    .track { gap: 4px !important; }
+    .swing-row { margin-top: 0 !important; }
+    .io-row { margin-top: 0 !important; }
+    .io-row.single { margin-bottom: 0 !important; }
+    .swing-chips { margin-bottom: 4px !important; }
+    .hint { margin: 4px 0 2px !important; }
+    .oct-row { margin-top: 4px !important; }
+    .mini-transport { margin-top: 4px !important; }
+    .voice-chips { margin-top: 4px !important; }
+    .chord-chips { margin-top: 4px !important; }
+    .bank-tabs { margin-bottom: 4px !important; }
+  }
+
+  /* desktop hover polish — real mice only, not touch-only 1024px+ iPads */
+  @media (min-width: 1000px) and (hover: hover) {
+    .io-btn:hover, .chip:hover, .wave-btn:hover, .bank:hover, .subtab:hover,
+    .slot-btn:hover, .oct-btn:hover, .bpm-btn:hover {
+      filter: brightness(1.08);
+    }
+    .knob:hover {
+      filter: brightness(1.05);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.9);
+    }
   }
   .plate h1 { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 20px; letter-spacing: 0.02em; }
   .plate h1 span { color: var(--accent); }
@@ -161,7 +239,21 @@
 
   .panel { display: none; flex: 1; flex-direction: column; min-height: 0; }
   .panel.on { display: flex; }
-  #beatsPanel.on, #keysPanel.on { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+  .subtabs { display: grid; gap: 6px; margin: 8px 0 0; flex-shrink: 0; }
+  #keysPanel .subtabs  { grid-template-columns: repeat(2, 1fr); }
+  #beatsPanel .subtabs { grid-template-columns: repeat(3, 1fr); }
+  .subtab {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
+    padding: 6px 0; border: none; border-radius: 6px;
+    background: var(--casing-deep); color: var(--ink);
+    opacity: 0.7;
+  }
+  .subtab.on { background: var(--accent); color: #fff; opacity: 1; }
+
+  .subpanel { display: none; flex: 1; flex-direction: column; min-height: 0; }
+  .subpanel.on { display: flex; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 
   .row-label { font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.5; margin: 10px 2px 5px; flex-shrink: 0; }
 
@@ -245,6 +337,7 @@
     display: flex; align-items: flex-end; justify-content: center;
     padding-bottom: 8px; font-size: 9px; letter-spacing: 0.1em;
     color: rgba(0,0,0,0.35);
+    touch-action: none;
   }
   .wkey:first-child { border-left: none; }
   .bkey {
@@ -253,6 +346,7 @@
     border-radius: 0 0 5px 5px;
     box-shadow: 0 3px 4px rgba(0,0,0,0.4);
     z-index: 2;
+    touch-action: none;
   }
   .wkey.held { background: var(--key-active); }
   .bkey.held { background: var(--accent); }
@@ -428,7 +522,12 @@
     <h1>PS<span>–</span>1</h1>
     <div class="plate-side">
       <div class="sub">pocket groovebox</div>
+      <button class="help-btn" id="saveMenuBtn" title="Save, groove &amp; export">⋯</button>
       <button class="help-btn" id="helpBtn">?</button>
+      <div class="save-menu" id="saveMenu">
+        <div class="save-menu-inner" id="saveMenuInner"></div>
+        <div class="hint">tap outside to close</div>
+      </div>
     </div>
   </div>
 
@@ -451,6 +550,12 @@
 
   <!-- ============ KEYS ============ -->
   <div class="panel on" id="keysPanel">
+    <div class="subtabs">
+      <button class="subtab" data-sub="keysPatch">PATCH</button>
+      <button class="subtab on" data-sub="keysPlay">PLAY</button>
+    </div>
+
+    <div class="subpanel" id="keysPatch">
     <div class="row-label">Oscillator</div>
     <div class="waves">
       <button class="wave-btn on" data-wave="sawtooth" data-name="SAWTOOTH">
@@ -523,7 +628,9 @@
         </div>
       </div>
     </div>
+    </div>
 
+    <div class="subpanel on" id="keysPlay">
     <div class="oct-row">
       <div class="mini-knob-unit">
         <div class="knob mini" id="keysVolKnob"><div class="pointer" id="keysVolPointer"></div></div>
@@ -560,10 +667,18 @@
       <div class="keyboard" id="keyboard"></div>
       <div class="hint">Slide across keys · beats keep playing here</div>
     </div>
+    </div>
   </div>
 
   <!-- ============ BEATS ============ -->
   <div class="panel" id="beatsPanel">
+    <div class="subtabs">
+      <button class="subtab on" data-sub="beatsGrid">GRID</button>
+      <button class="subtab" data-sub="beatsFeel">FEEL</button>
+      <button class="subtab" data-sub="beatsSave">SAVE</button>
+    </div>
+
+    <div class="subpanel on" id="beatsGrid">
     <div class="transport">
       <button class="play-btn" id="playBtn">▶ PLAY</button>
       <button class="rec-btn" id="recBtn">● REC</button>
@@ -577,6 +692,13 @@
     <div class="row-label">Pattern · tap drums to toggle · tap bass to cycle notes</div>
     <div class="grid" id="grid"></div>
 
+    <div class="io-row">
+      <button class="io-btn" id="mutateBtn">🎲 MUTATE</button>
+      <button class="io-btn" id="fillBtn">🔥 FILL</button>
+    </div>
+    </div>
+
+    <div class="subpanel" id="beatsFeel">
     <div class="swing-row">
       <span class="kname">Swing</span>
       <input type="range" id="swing" min="0" max="60" value="0">
@@ -589,7 +711,7 @@
       <span class="kval" id="humanizeVal">0%</span>
     </div>
 
-    <div class="row-label">Groove · tap a feel, or drag Swing to taste</div>
+    <div class="row-label">Feel · tap a groove, or drag Swing to taste</div>
     <div class="swing-chips">
       <button class="chip on" data-swing="0">STR8</button>
       <button class="chip" data-swing="8">54</button>
@@ -597,15 +719,13 @@
       <button class="chip" data-swing="24">62</button>
       <button class="chip" data-swing="32">66</button>
     </div>
-    <div class="io-row">
-      <button class="io-btn" id="mutateBtn">🎲 MUTATE</button>
-      <button class="io-btn" id="fillBtn">🔥 FILL</button>
-    </div>
 
     <div class="row-label">Mixer · tap name = mute · hold = solo</div>
     <div class="mixer" id="mixer"></div>
+    </div>
 
-    <div class="row-label">Groove · full patch recall — pattern, harmony, oscillator, knobs</div>
+    <div class="subpanel" id="beatsSave">
+    <div class="row-label">Groove presets · recalls pattern, harmony, oscillator &amp; knobs</div>
     <div class="io-row single">
       <button class="io-btn" id="grooveBtn">🎼 GROOVE ▾</button>
     </div>
@@ -639,6 +759,7 @@
     <div class="io-row single">
       <button class="io-btn" id="exportWavBtn">⇩ EXPORT WAV</button>
     </div>
+    </div>
 
     <div class="hint">Flip to keys and jam over the loop</div>
   </div>
@@ -647,6 +768,7 @@
 
 <div class="overlay" id="helpOverlay">
   <h2>Keys</h2>
+  <b>PATCH / PLAY</b> switch between shaping the sound and playing it ·
   Slide your finger across keys to glide · multi-touch works ·
   <b>MAIN / ENV / OSC / LOFI</b> switch knob banks · drag knobs up/down, or tap <b>− +</b> for fine steps ·
   <b>▶</b> and <b>●</b> under the octave buttons run the beat and arm recording from here ·
@@ -666,6 +788,7 @@
   pitching it — black keys are inert, and octave doesn't change anything in this mode.
 
   <h2>Beats</h2>
+  <b>GRID / FEEL / SAVE</b> switch between the step pattern, swing/mixer, and presets+export ·
   Tap drum cells to toggle, drag to paint · <b>Bass</b> cells cycle through notes with each tap ·
   <b>H1-H4</b> are four independent recorded voices (real four-part harmony) — a note's
   letter marks where it starts, unlabeled steps in the same color are it sustaining. Tap
@@ -1049,6 +1172,24 @@
       try { ctx.resume().catch(() => {}); } catch (e) { /* same as above */ }
     }
   });
+
+  // belt-and-suspenders zoom lockout, on top of the viewport meta tag and
+  // touch-action CSS: playing fast means rapid taps landing close together
+  // in time, which iOS Safari can still interpret as a double-tap-zoom
+  // gesture even where touch-action is set correctly — this tracks the
+  // last touchend globally and suppresses anything that looks like the
+  // second half of a double-tap, anywhere on the page. gesturestart is
+  // Safari's own long-standing (non-standard) pinch-zoom event, unrelated
+  // to touch-action, and preventing it is the standard way to block pinch
+  // regardless of which element the gesture started on.
+  document.addEventListener('gesturestart', e => e.preventDefault());
+  document.addEventListener('gesturechange', e => e.preventDefault());
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', e => {
+    const now = Date.now();
+    if (now - lastTouchEnd < 350) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
 
   // ---------------- toast + help ----------------
   const toastEl = document.getElementById('toast');
@@ -1888,6 +2029,17 @@
   MIX_CHANNELS.forEach(c => {
     const col = document.createElement('div');
     col.className = 'chan';
+
+    // desktop-only knob, alongside the mobile fader below — same pattern as
+    // keysVolKnob/Syn fader: two DOM nodes, one mixState, kept in sync via
+    // renderChan() rather than tracked separately
+    const knobWrap = document.createElement('div');
+    knobWrap.className = 'mix-knob-wrap';
+    knobWrap.innerHTML = '<div class="knob mini"><div class="pointer"></div></div>';
+    const mixKnob = knobWrap.querySelector('.knob');
+    const mixPointer = knobWrap.querySelector('.pointer');
+    col.appendChild(knobWrap);
+
     const fader = document.createElement('div');
     fader.className = 'fader';
     const fill = document.createElement('div');
@@ -1902,12 +2054,33 @@
 
     function renderChan() {
       fill.style.height = (mixState[c.id].vol * 100) + '%';
+      mixPointer.style.transform = `rotate(${-135 + mixState[c.id].vol * 270}deg)`;
       lbl.classList.toggle('muted', mixState[c.id].mute);
       lbl.classList.toggle('solo', mixState[c.id].solo);
       if (c.id === 'Syn') renderKeysVol();
     }
     renderChan();
     if (c.id === 'Syn') syncSynFader = renderChan;
+
+    let mixKnobStartY = 0, mixKnobStartV = 0;
+    mixKnob.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      unlock();
+      knobActive = true;
+      mixKnob.setPointerCapture(e.pointerId);
+      mixKnobStartY = e.clientY;
+      mixKnobStartV = mixState[c.id].vol;
+    });
+    mixKnob.addEventListener('pointermove', e => {
+      if (!mixKnob.hasPointerCapture(e.pointerId)) return;
+      e.preventDefault();
+      const dv = (mixKnobStartY - e.clientY) / 200;
+      mixState[c.id].vol = Math.min(1, Math.max(0, mixKnobStartV + dv));
+      renderChan();
+      applyMix();
+    });
+    ['pointerup', 'pointercancel'].forEach(ev =>
+      mixKnob.addEventListener(ev, () => { knobActive = false; }));
 
     function setFromY(clientY) {
       const r = fader.getBoundingClientRect();
@@ -3177,6 +3350,74 @@
     exportSongWav();
   });
 
+  // ---------------- desktop layout: DOM reparenting ----------------
+  // CHAIN/SONG move into the transport row next to PLAY, and the whole
+  // Save/Export cluster moves into a dropdown next to the help button —
+  // both are real cross-container moves (not achievable with grid-area
+  // alone), so this relocates the actual live elements rather than
+  // duplicating them, keeping every bit of existing state/animation/
+  // listener logic (SAVE armed pulse, slot has/clear-confirm, export
+  // disabled+relabel, chain preview, song .on toggle) working untouched.
+  // An invisible comment anchor left at each element's original spot lets
+  // restore() put it back exactly where it started, not just "at the end."
+  function makeRelocator(el) {
+    const anchor = document.createComment('relocate-anchor:' + (el.id || 'node'));
+    el.after(anchor);
+    let moved = false;
+    return {
+      moveTo(parent, before) {
+        if (moved) return;
+        before ? parent.insertBefore(el, before) : parent.appendChild(el);
+        moved = true;
+      },
+      restore() {
+        if (!moved) return;
+        anchor.parentNode.insertBefore(el, anchor);
+        moved = false;
+      },
+    };
+  }
+
+  const transportEl = document.querySelector('.transport');
+  const beatsSaveEl = document.getElementById('beatsSave');
+  const saveMenuInner = document.getElementById('saveMenuInner');
+  const saveMenu = document.getElementById('saveMenu');
+  const saveMenuBtn = document.getElementById('saveMenuBtn');
+
+  const chainRelocator = makeRelocator(document.getElementById('chainBtn'));
+  const songRelocator = makeRelocator(document.getElementById('songBtn'));
+  const saveRelocator = makeRelocator(beatsSaveEl);
+
+  function applyDesktopLayout(isDesktop) {
+    if (isDesktop) {
+      chainRelocator.moveTo(transportEl);
+      songRelocator.moveTo(transportEl);
+      saveRelocator.moveTo(saveMenuInner);
+    } else {
+      chainRelocator.restore();
+      songRelocator.restore();
+      saveRelocator.restore();
+      saveMenu.classList.remove('on');
+    }
+  }
+  const desktopMQ = window.matchMedia('(min-width: 1000px)');
+  applyDesktopLayout(desktopMQ.matches);
+  desktopMQ.addEventListener('change', e => applyDesktopLayout(e.matches));
+  // matchMedia's change event isn't perfectly reliable in every WKWebView/
+  // automation context — a redundant resize listener is cheap insurance,
+  // and applyDesktopLayout() is idempotent so firing twice is harmless
+  window.addEventListener('resize', () => applyDesktopLayout(desktopMQ.matches));
+
+  saveMenuBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    saveMenu.classList.toggle('on');
+  });
+  document.addEventListener('pointerdown', e => {
+    if (!saveMenu.classList.contains('on')) return;
+    if (saveMenu.contains(e.target) || saveMenuBtn.contains(e.target)) return;
+    saveMenu.classList.remove('on');
+  });
+
   // ---------------- tabs ----------------
   document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('pointerdown', () => {
@@ -3184,6 +3425,21 @@
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('on'));
       tab.classList.add('on');
       document.getElementById(tab.dataset.panel).classList.add('on');
+    });
+  });
+
+  // ---------------- subtabs (Keys: PATCH/PLAY · Beats: GRID/FEEL/SAVE) ----------------
+  // scoped per group so Keys' subtabs and Beats' subtabs don't clear each
+  // other's .on state the way a single global querySelectorAll would
+  document.querySelectorAll('.subtabs').forEach(group => {
+    const parent = group.parentElement; // #keysPanel or #beatsPanel
+    group.querySelectorAll('.subtab').forEach(sub => {
+      sub.addEventListener('pointerdown', () => {
+        group.querySelectorAll('.subtab').forEach(s => s.classList.remove('on'));
+        parent.querySelectorAll(':scope > .subpanel').forEach(p => p.classList.remove('on'));
+        sub.classList.add('on');
+        document.getElementById(sub.dataset.sub).classList.add('on');
+      });
     });
   });
 
