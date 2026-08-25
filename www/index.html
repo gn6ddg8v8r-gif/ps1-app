@@ -101,7 +101,7 @@
   .mini-btn.rec.armed { background: #D8322F; color: #fff; animation: pulse 0.7s infinite alternate; }
   .mini-btn.sustain { background: var(--key-white); color: var(--ink); width: 48px; font-size: 10px; letter-spacing: 0.06em; }
   .mini-btn.sustain.on { background: var(--key-black); color: #fff; }
-  .groove-row.clear.confirm { background: #D8322F; color: #fff; }
+  .groove-row.confirm { background: #D8322F; color: #fff; }
 
   button { cursor: pointer; }
 
@@ -158,6 +158,7 @@
     #beatsPanel > .hint { grid-area: hint; }
 
     .keyboard-wrap { min-height: 280px !important; margin-top: 4px !important; }
+    .keyboard-wrap.mini { display: none !important; }
     .knob:not(.mini) { width: 64px !important; height: 64px !important; }
     .knob:not(.mini) .pointer { height: 19px !important; transform-origin: 50% 26px !important; }
 
@@ -351,6 +352,13 @@
   .wkey.held { background: var(--key-active); }
   .bkey.held { background: var(--accent); }
   .bkey.inert { opacity: 0.35; }
+
+  .keyboard-wrap.mini {
+    flex: none;
+    min-height: 0;   /* required — base .keyboard-wrap's min-height:150px
+                         would otherwise silently override height below */
+    height: 80px;
+  }
 
   /* ---------- sequencer ---------- */
   .transport { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-shrink: 0; }
@@ -628,6 +636,9 @@
         </div>
       </div>
     </div>
+    <div class="keyboard-wrap mini">
+      <div class="keyboard" id="keyboardPatch"></div>
+    </div>
     </div>
 
     <div class="subpanel on" id="keysPlay">
@@ -695,6 +706,9 @@
     <div class="io-row">
       <button class="io-btn" id="mutateBtn">🎲 MUTATE</button>
       <button class="io-btn" id="fillBtn">🔥 FILL</button>
+    </div>
+    <div class="keyboard-wrap mini">
+      <div class="keyboard" id="keyboardGrid"></div>
     </div>
     </div>
 
@@ -868,6 +882,14 @@
   let filter, delayNode, delayFeedback, delayWet, reverbNode, reverbWet, dryGain, master, analyser;
   let drumBus, drumVerbSend, bassBus, noiseBuf;
   let voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain;
+  // Focus & Calm-only filter-cutoff LFO — a second, independent path from
+  // lfo/lfoGain above (which rides oscillator detune/pitch). This one feeds
+  // filter.frequency directly. calmLfoRate/calmLfoDepth are plain data, not
+  // part of params[] — preset-baked texture, not a user-facing knob. Zero
+  // depth (the default, and what applyGroove resets to) is true silence for
+  // every preset except Focus & Calm.
+  let calmLfo, calmLfoGain;
+  let calmLfoRate = 0, calmLfoDepth = 0; // Hz (rate) / Hz swing (depth) on filter.frequency
   // lofi stage: master → duckGain → crush (dry/wet) → wow/flutter delay → limiter
   let duckGain, crushShaper, crushDry, crushWet;
   let wowDelay, wowLfo, wowLfoGain, flutterLfo, flutterLfoGain;
@@ -982,6 +1004,18 @@
     lfoGain.gain.value = params.lfoDepth.v * 60;
     lfo.connect(lfoGain);
     lfo.start();
+
+    // Focus & Calm filter-cutoff LFO — separate oscillator/gain from the
+    // vibrato lfo/lfoGain above; modulates filter.frequency, not detune.
+    // Recreated fresh here every buildAudioGraph() call, same as filter
+    // itself, so it works identically for the live ctx and offlineCtx.
+    calmLfo = c.createOscillator();
+    calmLfo.frequency.value = calmLfoRate;
+    calmLfoGain = c.createGain();
+    calmLfoGain.gain.value = calmLfoDepth;
+    calmLfo.connect(calmLfoGain);
+    calmLfoGain.connect(filter.frequency);
+    calmLfo.start();
 
     // master limiter: stacked oscillators + drums stay clean
     limiter = c.createDynamicsCompressor();
@@ -2726,7 +2760,183 @@
         },
       ],
     },
+    {
+      label: 'Focus & Calm',
+      items: [
+        {
+          id: 'deepfocus', label: 'Deep Focus',
+          base: {
+            bpm: 62, swing: 0, humanize: 0,
+            wave: 'triangle',
+            knobs: { cutoff: 0.30, delay: 0.15, reverb: 0.55, drive: 0.03, attack: 0.24, decay: 0.55, sustain: 0.88, release: 0.62, detune: 0.35, glide: 0, lfoRate: 0.2, lfoDepth: 0, crackle: 0, wow: 0, crush: 0, duck: 0, kickTune: 0.38, kickDecay: 0.30, snareTone: 0.3, hatDecay: 0.3 },
+            calmLfoRate: 14, calmLfoDepth: 6,
+          },
+          sections: [
+            { id: 'A', bars: 8, pattern: {
+              Kick: '1000000000000000', Snare: '0000000000000000', Clap: '0000000000000000', CHat: '0000000000000000', OHat: '0000000000000000',
+              Bass: '................', Acc: '0000000000000000',
+              H1: voice([{ at: 0, midi: 50, len: 16 }]), H2: NO_VOICE,
+              H3: voice([{ at: 0, midi: 53, len: 16 }]), H4: voice([{ at: 0, midi: 57, len: 16 }]),
+            }},
+            { id: 'B', bars: 8, pattern: {
+              Kick: '1000000010000000', Snare: '0000000000000000', Clap: '0000000000000000', CHat: '0000000000000000', OHat: '0000000000000000',
+              Bass: '................', Acc: '0000000000000000',
+              H1: voice([{ at: 0, midi: 50, len: 16 }]), H2: voice([{ at: 12, midi: 62, len: 2 }]),
+              H3: voice([{ at: 0, midi: 53, len: 16 }]), H4: voice([{ at: 0, midi: 57, len: 16 }]),
+            }},
+            { id: 'C', bars: 8, pattern: {
+              Kick: '1000100010001000', Snare: '0000000000000000', Clap: '0000000000000000', CHat: '0000000000000000', OHat: '0000000000000000',
+              Bass: '................', Acc: '0000000000000000',
+              H1: voice([{ at: 0, midi: 50, len: 16 }]), H2: voice([{ at: 6, midi: 65, len: 2 }]),
+              H3: voice([{ at: 0, midi: 53, len: 16 }]), H4: voice([{ at: 0, midi: 57, len: 16 }]),
+            }},
+            { id: 'D', bars: 8, pattern: {
+              Kick: '1000000000000000', Snare: '0000000000000000', Clap: '0000000000000000', CHat: '0000000000000000', OHat: '0000000000000000',
+              Bass: '................', Acc: '0000000000000000',
+              H1: voice([{ at: 0, midi: 50, len: 16 }]), H2: NO_VOICE,
+              H3: voice([{ at: 0, midi: 53, len: 16 }]), H4: voice([{ at: 0, midi: 57, len: 16 }]),
+            }},
+          ],
+          chainOrder: ['A', 'B', 'C', 'D'],
+        },
+        {
+          id: 'lightbackground', label: 'Light Background',
+          base: {
+            bpm: 68, swing: 0, humanize: 0,
+            wave: 'triangle',
+            knobs: { cutoff: 0.40, delay: 0.18, reverb: 0.5, drive: 0.04, attack: 0.20, decay: 0.5, sustain: 0.85, release: 0.55, detune: 0.32, glide: 0, lfoRate: 0.2, lfoDepth: 0, crackle: 0, wow: 0, crush: 0, duck: 0, kickTune: 0.42, kickDecay: 0.32, snareTone: 0.32, hatDecay: 0.32 },
+            calmLfoRate: 16, calmLfoDepth: 5,
+          },
+          sections: [
+            { id: 'A', bars: 8, pattern: {
+              Kick: '1000000010000000', Snare: '0000000000000000', Clap: '0000000000000000', CHat: '0010001000100010', OHat: '0000000000000000',
+              Bass: '0.......0.......', Acc: '0000000000000000',
+              H1: voice([{ at: 0, midi: 48, len: 16 }]), H2: NO_VOICE,
+              H3: voice([{ at: 0, midi: 52, len: 16 }]), H4: voice([{ at: 0, midi: 55, len: 16 }]),
+            }},
+            { id: 'B', bars: 8, pattern: {
+              Kick: '1000100010001000', Snare: '0000000000000000', Clap: '0000000000000000', CHat: '0010101000101010', OHat: '0000000000000000',
+              Bass: '0...0...0...0...', Acc: '0000000000000000',
+              H1: voice([{ at: 0, midi: 48, len: 16 }]), H2: voice([{ at: 12, midi: 64, len: 2 }]),
+              H3: voice([{ at: 0, midi: 52, len: 16 }]), H4: voice([{ at: 0, midi: 55, len: 16 }]),
+            }},
+            { id: 'C', bars: 8, pattern: {
+              Kick: '1000100010001000', Snare: '0000000000000000', Clap: '0000000000000000', CHat: '1010101010101010', OHat: '0000000000000000',
+              Bass: '0...0...0...0...', Acc: '0000000000000000',
+              H1: voice([{ at: 0, midi: 48, len: 16 }]), H2: voice([{ at: 6, midi: 67, len: 2 }]),
+              H3: voice([{ at: 0, midi: 52, len: 16 }]), H4: voice([{ at: 0, midi: 55, len: 16 }]),
+            }},
+            { id: 'D', bars: 8, pattern: {
+              Kick: '1000000010000000', Snare: '0000000000000000', Clap: '0000000000000000', CHat: '0010001000100010', OHat: '0000000000000000',
+              Bass: '0.......0.......', Acc: '0000000000000000',
+              H1: voice([{ at: 0, midi: 48, len: 16 }]), H2: NO_VOICE,
+              H3: voice([{ at: 0, midi: 52, len: 16 }]), H4: voice([{ at: 0, midi: 55, len: 16 }]),
+            }},
+          ],
+          chainOrder: ['A', 'B', 'C', 'D'],
+        },
+        {
+          id: 'winddown', label: 'Wind-Down',
+          base: {
+            // spec target was 55-58 BPM; setBpm() floors at 60 (see setBpm
+            // below) — authored at 60, the effective minimum, still clearly
+            // the slowest of the three.
+            bpm: 60, swing: 0, humanize: 0,
+            wave: 'triangle',
+            knobs: { cutoff: 0.25, delay: 0.12, reverb: 0.65, drive: 0.02, attack: 0.28, decay: 0.6, sustain: 0.9, release: 0.7, detune: 0.3, glide: 0, lfoRate: 0.2, lfoDepth: 0, crackle: 0, wow: 0, crush: 0, duck: 0, kickTune: 0.35, kickDecay: 0.28, snareTone: 0.3, hatDecay: 0.3 },
+            calmLfoRate: 12, calmLfoDepth: 8,
+          },
+          sections: [
+            { id: 'A', bars: 8, pattern: {
+              Kick: '1000000010000000', Snare: '0000000000000000', Clap: '0000000000000000', CHat: '0000000000000000', OHat: '0000000000000000',
+              Bass: '0.......0.......', Acc: '0000000000000000',
+              H1: voice([{ at: 0, midi: 52, len: 16 }]), H2: NO_VOICE,
+              H3: voice([{ at: 0, midi: 55, len: 16 }]), H4: voice([{ at: 0, midi: 59, len: 16 }]),
+            }},
+            { id: 'B', bars: 8, pattern: {
+              Kick: '1000000000000000', Snare: '0000000000000000', Clap: '0000000000000000', CHat: '0000000000000000', OHat: '0000000000000000',
+              Bass: '0...............', Acc: '0000000000000000',
+              H1: voice([{ at: 0, midi: 52, len: 16 }]), H2: voice([{ at: 12, midi: 67, len: 2 }]),
+              H3: voice([{ at: 0, midi: 55, len: 16 }]), H4: voice([{ at: 0, midi: 59, len: 16 }]),
+            }},
+            { id: 'C', bars: 8, pattern: {
+              Kick: '0000000000000000', Snare: '0000000000000000', Clap: '0000000000000000', CHat: '0000000000000000', OHat: '0000000000000000',
+              Bass: '................', Acc: '0000000000000000',
+              H1: voice([{ at: 0, midi: 52, len: 16 }]), H2: voice([{ at: 6, midi: 71, len: 2 }]),
+              H3: voice([{ at: 0, midi: 55, len: 16 }]), H4: voice([{ at: 0, midi: 59, len: 16 }]),
+            }},
+            { id: 'D', bars: 8, pattern: {
+              Kick: '0000000000000000', Snare: '0000000000000000', Clap: '0000000000000000', CHat: '0000000000000000', OHat: '0000000000000000',
+              Bass: '................', Acc: '0000000000000000',
+              H1: voice([{ at: 0, midi: 52, len: 16 }]), H2: NO_VOICE,
+              H3: voice([{ at: 0, midi: 55, len: 16 }]), H4: voice([{ at: 0, midi: 59, len: 16 }]),
+            }},
+          ],
+          chainOrder: ['A', 'B', 'C', 'D'],
+        },
+      ],
+    },
   ];
+
+  // Retrofits every non-Focus & Calm preset with the same sections/
+  // chainOrder song shape, derived from its existing single pattern rather
+  // than hand-authored — A/B/C/D computed once here at load time, not per
+  // preset. B is the preset's real pattern, unchanged.
+  function mutateStr(str, prob) {
+    return str.split('').map(ch => Math.random() < prob ? (ch === '1' ? '0' : '1') : ch).join('');
+  }
+  // Acc is a 0/1/2 digit string, not a bit string — mirrors mutatePattern()'s
+  // (accentPattern[s]+1)%3 at the same 0.08 probability, so C's "MUTATE-style"
+  // claim is actually true, not just true for drums.
+  function mutateAccStr(str, prob) {
+    return str.split('').map(ch => Math.random() < prob ? String((+ch + 1) % 3) : ch).join('');
+  }
+
+  function deriveGenreArc(item) {
+    const p = item.pattern;
+    const ZERO = '0'.repeat(STEPS), REST = '.'.repeat(STEPS);
+    const { Kick, Snare, Clap, CHat, OHat, Bass, Acc, H1, H2, H3, H4 } = p;
+    const base = { Kick, Snare, Clap, CHat, OHat, Bass, Acc, H1, H2, H3, H4 };
+
+    // presets with zero drums AND zero bass (e.g. an ambient pad-only
+    // preset) would get a silent intro if harmony were also stripped —
+    // keep harmony present for those instead of following the normal
+    // "strip it" rule.
+    const noDrumsOrBass = !['Kick', 'Snare', 'Clap', 'CHat', 'OHat'].some(t => base[t].includes('1'))
+      && !Bass.split('').some(c => c !== '.');
+
+    const A = noDrumsOrBass ? { ...base } : { ...base, H1: NO_VOICE, H2: NO_VOICE, H3: NO_VOICE, H4: NO_VOICE };
+    const B = { ...base };
+    const C = {
+      ...base,
+      Kick: mutateStr(Kick, 0.06), Snare: mutateStr(Snare, 0.06), Clap: mutateStr(Clap, 0.05),
+      CHat: mutateStr(CHat, 0.12), OHat: mutateStr(OHat, 0.10), Acc: mutateAccStr(Acc, 0.08),
+    };
+    const D = { ...base, Kick: ZERO, Snare: ZERO, Clap: ZERO, CHat: ZERO, OHat: ZERO, Bass: REST, Acc: ZERO };
+
+    return [
+      { id: 'A', bars: 4, pattern: A }, { id: 'B', bars: 8, pattern: B },
+      { id: 'C', bars: 8, pattern: C }, { id: 'D', bars: 4, pattern: D },
+    ];
+  }
+
+  GROOVE_CATEGORIES.forEach(cat => {
+    if (cat.label === 'Focus & Calm') return; // already hand-authored with its own base/sections
+    cat.items.forEach(item => {
+      if (item.sections) return; // defensive: never re-derive an already-song-shaped item
+      item.base = {
+        wave: item.wave,
+        knobs: { ...item.knobs }, // copy, not the same object reference as item.knobs
+        bpm: item.pattern.bpm, swing: item.pattern.swing, humanize: item.pattern.humanize,
+        // calmLfoRate/calmLfoDepth intentionally omitted — applyGrooveSong's
+        // `g.base.calmLfoRate || 0` fallback silences it for every non-Focus
+        // & Calm preset, matching applyGroove's existing reset today.
+      };
+      item.sections = deriveGenreArc(item);
+      item.chainOrder = ['A', 'B', 'C', 'D'];
+    });
+  });
+
   function applyState(state) {
     // any wholesale pattern swap (clear, groove/slot load, song-mode
     // advance, import) invalidates a pending harmony pitch-cycle session —
@@ -2783,7 +2993,42 @@
     applyState(g.pattern);
     selectWave(document.querySelector(`.wave-btn[data-wave="${g.wave}"]`));
     Object.keys(g.knobs).forEach(name => { params[name].v = g.knobs[name]; applyParam(name); });
+    calmLfoRate = 0; calmLfoDepth = 0; applyCalmLfo(); // silence Focus & Calm's LFO for every other preset
     renderAllSlots();
+    if (!playing) startSeq();
+  }
+
+  // Section-based groove: applies base (wave/knobs/bpm/calm-LFO — the same
+  // lines applyGroove already uses for wave/knobs, plus calm-LFO), writes
+  // each section's full pattern into save slots A-D, and builds a repeated-
+  // letter songChain so SONG plays it immediately with zero changes to
+  // advanceSong/firstPopulatedFrom/exportSongWav. Overwrite confirmation is
+  // the caller's job (the click handler below) — by the time this runs,
+  // clobbering A-D is already approved.
+  function applyGrooveSong(g) {
+    selectWave(document.querySelector(`.wave-btn[data-wave="${g.base.wave}"]`));
+    Object.keys(g.base.knobs).forEach(name => { params[name].v = g.base.knobs[name]; applyParam(name); });
+    if (g.base.bpm) setBpm(g.base.bpm);
+    if (g.base.swing !== undefined) setSwing(g.base.swing);
+    if (g.base.humanize !== undefined) setHumanize(g.base.humanize);
+    calmLfoRate = g.base.calmLfoRate || 0;
+    calmLfoDepth = g.base.calmLfoDepth || 0;
+    applyCalmLfo();
+
+    g.sections.forEach(sec => { slots[sec.id] = { ...sec.pattern }; });
+    persistSlots();
+    refreshSlotUI();  // updates the A-D slot buttons' "has" highlight
+    renderAllSlots(); // updates the 4 on-screen knob dials for the current bank
+
+    songChain = g.chainOrder.flatMap(id => {
+      const sec = g.sections.find(s => s.id === id);
+      return new Array(sec.bars).fill(id);
+    });
+    songPos = 0;
+    persistSong();
+    renderChainPreview();
+
+    applyPatternOnly(slots[g.chainOrder[0]]); // load section A's pattern immediately, like applyGroove does
     if (!playing) startSeq();
   }
 
@@ -2800,12 +3045,14 @@
       row.className = 'groove-row';
       row.textContent = g.label;
       row.dataset.groove = g.id;
+      row.dataset.label = g.label; // revert text for the per-button confirm-arm
       grooveOverlay.appendChild(row);
     });
   });
   const grooveClearRow = document.createElement('button');
   grooveClearRow.className = 'groove-row clear';
   grooveClearRow.textContent = 'Clear Pattern';
+  grooveClearRow.dataset.label = 'Clear Pattern';
   grooveOverlay.appendChild(grooveClearRow);
   const grooveDismissHint = document.createElement('div');
   grooveDismissHint.className = 'dismiss';
@@ -2823,32 +3070,54 @@
     if (e.target === grooveOverlay) grooveOverlay.classList.remove('on');
   });
 
-  let grooveClearArmT = null;
+  // per-row confirm-arm, keyed on the button element itself — not one
+  // shared module variable, since there can now be several confirmable
+  // rows (Clear Pattern + any section-based groove) armed independently,
+  // each with its own 2s auto-revert.
+  function armGrooveConfirm(btn, confirmText) {
+    btn.classList.add('confirm');
+    btn.textContent = confirmText;
+    clearTimeout(+btn.dataset.armTimer);
+    btn.dataset.armTimer = setTimeout(() => cancelGrooveArm(btn), 2000);
+  }
+  function cancelGrooveArm(btn) {
+    if (!btn.classList.contains('confirm')) return;
+    btn.classList.remove('confirm');
+    btn.textContent = btn.dataset.label;
+    clearTimeout(+btn.dataset.armTimer);
+  }
+
   grooveOverlay.querySelectorAll('.groove-row').forEach(btn => {
     btn.addEventListener('pointerdown', e => {
       e.preventDefault();
       e.stopPropagation();
       unlock();
+      grooveOverlay.querySelectorAll('.groove-row').forEach(other => { if (other !== btn) cancelGrooveArm(other); });
+
       if (btn.classList.contains('clear')) {
-        if (!btn.classList.contains('confirm')) {
-          btn.classList.add('confirm');
-          btn.textContent = 'Tap again to clear';
-          clearTimeout(grooveClearArmT);
-          grooveClearArmT = setTimeout(() => {
-            btn.classList.remove('confirm');
-            btn.textContent = 'Clear Pattern';
-          }, 2000);
-          return;
-        }
-        clearTimeout(grooveClearArmT);
-        btn.classList.remove('confirm');
-        btn.textContent = 'Clear Pattern';
+        if (!btn.classList.contains('confirm')) { armGrooveConfirm(btn, 'Tap again to clear'); return; }
+        cancelGrooveArm(btn);
         applyState({});
         toast('Pattern cleared');
         grooveOverlay.classList.remove('on');
         return;
       }
+
       const groove = GROOVE_CATEGORIES.flatMap(c => c.items).find(g => g.id === btn.dataset.groove);
+
+      if (groove.sections) {
+        const slotsOccupied = !!(slots.A || slots.B || slots.C || slots.D);
+        if (slotsOccupied && !btn.classList.contains('confirm')) {
+          armGrooveConfirm(btn, 'Tap again to overwrite Slots A-D');
+          return;
+        }
+        cancelGrooveArm(btn); // no-op on a fresh (never-armed) write-through
+        applyGrooveSong(groove);
+        grooveOverlay.classList.remove('on');
+        toast(groove.label + ' loaded');
+        return;
+      }
+
       applyGroove(groove);
       grooveOverlay.classList.remove('on');
       toast(groove.label + ' loaded');
@@ -3226,6 +3495,7 @@
       ctx, filter, delayNode, delayFeedback, delayWet, reverbNode, reverbWet,
       dryGain, master, analyser, drumBus, drumVerbSend, bassBus, noiseBuf,
       voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain,
+      calmLfo, calmLfoGain,
       duckGain, crushShaper, crushDry, crushWet,
       wowDelay, wowLfo, wowLfoGain, flutterLfo, flutterLfoGain,
       crackleBuf, crackleSrc, crackleFilt1, crackleFilt2, crackleGain,
@@ -3248,6 +3518,7 @@
       ({ ctx, filter, delayNode, delayFeedback, delayWet, reverbNode, reverbWet,
         dryGain, master, analyser, drumBus, drumVerbSend, bassBus, noiseBuf,
         voiceBus, drivePre, shaper, drivePost, limiter, lfo, lfoGain,
+        calmLfo, calmLfoGain,
         duckGain, crushShaper, crushDry, crushWet,
         wowDelay, wowLfo, wowLfoGain, flutterLfo, flutterLfoGain,
         crackleBuf, crackleSrc, crackleFilt1, crackleFilt2, crackleGain } = saved);
@@ -3609,12 +3880,15 @@
 
   // ---------------- keyboard ----------------
   const keyboard = document.getElementById('keyboard');
+  const keyboardEls = []; // every built instance — selectWave()'s
+                           // chop-mode relabeling iterates this
   const noteReadout = document.getElementById('noteReadout');
   const WHITE = [0, 2, 4, 5, 7, 9, 11, 12];
   const WHITE_LABELS = ['C','D','E','F','G','A','B','C'];
   const BLACKS = [{semi:1, after:0},{semi:3, after:1},{semi:6, after:3},{semi:8, after:4},{semi:10, after:5}];
 
-  (function buildKeys() {
+  function buildKeys(containerEl) {
+    keyboardEls.push(containerEl);
     const n = WHITE.length;
     WHITE.forEach((semi, i) => {
       const k = document.createElement('div');
@@ -3624,7 +3898,7 @@
       k.dataset.semi = semi;
       k.dataset.label = WHITE_LABELS[i];
       k.textContent = WHITE_LABELS[i];
-      keyboard.appendChild(k);
+      containerEl.appendChild(k);
     });
     const bw = 100 / n * 0.62;
     BLACKS.forEach(b => {
@@ -3634,9 +3908,9 @@
       k.style.width = bw + '%';
       k.dataset.semi = b.semi;
       k.dataset.label = WHITE_LABELS[b.after] + '#';
-      keyboard.appendChild(k);
+      containerEl.appendChild(k);
     });
-  })();
+  }
 
   function keyFromPoint(x, y) {
     const el = document.elementFromPoint(x, y);
@@ -3670,35 +3944,46 @@
     }
   }
 
-  keyboard.addEventListener('pointerdown', e => {
-    e.preventDefault();
-    unlock();
-    const k = keyFromPoint(e.clientX, e.clientY);
-    if (k) {
-      const m = midiFor(k);
-      startVoice(e.pointerId, m, k);
-      recordNote(m, e.pointerId);
-      startChordExtras(e.pointerId, m, k);
-    }
-  });
-  keyboard.addEventListener('pointermove', e => {
-    if (!voices.has(e.pointerId)) return;
-    const k = keyFromPoint(e.clientX, e.clientY);
-    const v = voices.get(e.pointerId);
-    if (k && k !== v.keyEl) {
-      const m = midiFor(k);
-      startVoice(e.pointerId, m, k);
-      retriggerChordExtras(e.pointerId, m, k);
-    }
-  });
-  const endPointer = e => {
-    stopVoice(e.pointerId);
-    finishRecordNote(e.pointerId);
-    stopChordExtras(e.pointerId);
-  };
-  keyboard.addEventListener('pointerup', endPointer);
-  keyboard.addEventListener('pointercancel', endPointer);
-  keyboard.addEventListener('pointerleave', endPointer);
+  function wireKeyboard(containerEl) {
+    containerEl.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      unlock();
+      const k = keyFromPoint(e.clientX, e.clientY);
+      if (k) {
+        const m = midiFor(k);
+        startVoice(e.pointerId, m, k);
+        recordNote(m, e.pointerId);
+        startChordExtras(e.pointerId, m, k);
+      }
+    });
+    containerEl.addEventListener('pointermove', e => {
+      if (!voices.has(e.pointerId)) return;
+      const k = keyFromPoint(e.clientX, e.clientY);
+      const v = voices.get(e.pointerId);
+      if (k && k !== v.keyEl) {
+        const m = midiFor(k);
+        startVoice(e.pointerId, m, k);
+        retriggerChordExtras(e.pointerId, m, k);
+      }
+    });
+    const endPointer = e => {
+      stopVoice(e.pointerId);
+      finishRecordNote(e.pointerId);
+      stopChordExtras(e.pointerId);
+    };
+    containerEl.addEventListener('pointerup', endPointer);
+    containerEl.addEventListener('pointercancel', endPointer);
+    containerEl.addEventListener('pointerleave', endPointer);
+  }
+
+  buildKeys(keyboard);
+  wireKeyboard(keyboard);
+  const keyboardPatch = document.getElementById('keyboardPatch');
+  const keyboardGrid = document.getElementById('keyboardGrid');
+  buildKeys(keyboardPatch);
+  wireKeyboard(keyboardPatch);
+  buildKeys(keyboardGrid);
+  wireKeyboard(keyboardGrid);
 
   // ---------------- computer keyboard (laptop) ----------------
   // A-row = white keys, W-row = black keys, Z/X = octave, Space = play/stop
@@ -3763,13 +4048,16 @@
       voices.forEach(v => v.oscs.forEach(o => { o.type = currentWave; }));
     }
     // chop mode repurposes the keyboard as 7 numbered pads (white keys only)
+    // — applied to every built keyboard instance, not just the main one
     const chop = currentWave === 'chop';
-    [...keyboard.children].forEach((k, i) => {
-      if (k.classList.contains('wkey')) {
-        k.textContent = chop ? String(chopSliceIndex(+k.dataset.semi) + 1) : k.dataset.label;
-      } else if (k.classList.contains('bkey')) {
-        k.classList.toggle('inert', chop);
-      }
+    keyboardEls.forEach(kb => {
+      [...kb.children].forEach((k, i) => {
+        if (k.classList.contains('wkey')) {
+          k.textContent = chop ? String(chopSliceIndex(+k.dataset.semi) + 1) : k.dataset.label;
+        } else if (k.classList.contains('bkey')) {
+          k.classList.toggle('inert', chop);
+        }
+      });
     });
   }
 
@@ -4031,6 +4319,15 @@
       crushWet.gain.setTargetAtTime(p * 0.9, ctx.currentTime, 0.05);
     }
     // attack / decay / sustain / release / detune / glide / duck are read at note time
+  }
+
+  // pushes calmLfoRate/calmLfoDepth onto the live nodes — same guard/style
+  // as applyParam, called from applyGroove (reset to 0) and applyGrooveSong
+  // (set to the preset's values), never from a knob (not in params[]).
+  function applyCalmLfo() {
+    if (!ctx) return;
+    calmLfo.frequency.setTargetAtTime(calmLfoRate, ctx.currentTime, 0.02);
+    calmLfoGain.gain.setTargetAtTime(calmLfoDepth, ctx.currentTime, 0.02);
   }
 
   const BANKS = {
