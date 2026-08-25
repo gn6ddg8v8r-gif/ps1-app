@@ -1,5 +1,9 @@
-// PS-1 service worker: cache-first so the synth works offline once installed
-const CACHE = 'ps1-v1';
+// PS-1 service worker: network-first for the app shell (so a new deploy is
+// picked up immediately whenever the phone is online), cache-first for
+// static assets (icons/fonts, which rarely change). Either way, falls back
+// to whatever's cached when there's no network — that's what makes the app
+// still work offline once it's been loaded at least once.
+const CACHE = 'ps1-v2'; // bumped so existing installs drop their stuck v1 cache
 const ASSETS = ['./index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
@@ -12,6 +16,18 @@ self.addEventListener('activate', e => {
   );
 });
 self.addEventListener('fetch', e => {
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request).then(res => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then(c => c.put(e.request, copy));
+        }
+        return res;
+      }).catch(() => caches.match(e.request).then(hit => hit || caches.match('./index.html')))
+    );
+    return;
+  }
   e.respondWith(
     caches.match(e.request).then(hit => hit || fetch(e.request).then(res => {
       // opportunistically cache same-origin + font requests
