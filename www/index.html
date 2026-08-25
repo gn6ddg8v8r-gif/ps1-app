@@ -80,6 +80,62 @@
     margin-top: 20px; font-size: 10px; letter-spacing: 0.14em;
     text-transform: uppercase; opacity: 0.55; text-align: center;
   }
+
+  .groove-sheet-scrim {
+    position: fixed; inset: 0; background: rgba(10, 14, 11, 0.4);
+    z-index: 52; display: none;
+  }
+  .groove-sheet-scrim.on { display: block; }
+
+  .groove-sheet {
+    position: fixed; left: 50%; bottom: 0; transform: translateX(-50%);
+    width: 100%; max-width: 440px;
+    background: #17211A; color: #EDEBE4;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -6px 20px rgba(0,0,0,0.35);
+    padding: 14px 14px max(env(safe-area-inset-bottom), 12px);
+    z-index: 53; display: none;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .groove-sheet.on { display: block; }
+
+  .groove-sheet-handle {
+    width: 36px; height: 4px; border-radius: 2px;
+    background: rgba(255,255,255,0.25); margin: 0 auto 10px;
+  }
+  .groove-sheet-close {
+    position: absolute; top: 10px; right: 10px;
+    width: 22px; height: 22px; border: none; border-radius: 50%;
+    background: rgba(255,255,255,0.12); color: #EDEBE4;
+    font-size: 11px; display: flex; align-items: center; justify-content: center;
+  }
+  .groove-sheet-step {
+    display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 8px;
+  }
+  .groove-sheet-arrow {
+    width: 44px; height: 44px; border: none; border-radius: 10px;
+    background: rgba(255,255,255,0.1); color: #EDEBE4; font-size: 16px; font-weight: 700;
+  }
+  .groove-sheet-arrow:active { background: rgba(255,255,255,0.2); }
+  .groove-sheet-center { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .groove-sheet-cat {
+    font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.5;
+  }
+  .groove-sheet-name {
+    font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15px;
+    text-align: center; background: none; border: none; color: #EDEBE4;
+    padding: 4px 6px; border-radius: 8px; max-width: 100%;
+  }
+  .groove-sheet-name:active { background: rgba(255,255,255,0.1); }
+  .groove-sheet-name.confirm {
+    background: #D8322F; color: #fff; font-size: 11px; animation: pulse 0.7s infinite alternate;
+  }
+  .groove-sheet .hint { color: #EDEBE4; opacity: 0.4; margin: 6px 0 8px; }
+  .groove-sheet .io-row { margin-top: 0; }
+  .groove-sheet .io-btn.confirm {
+    background: #D8322F; color: #fff; animation: pulse 0.7s infinite alternate;
+  }
+
   .toast {
     position: fixed; left: 50%; bottom: 26px;
     transform: translateX(-50%) translateY(8px);
@@ -136,6 +192,7 @@
     .tabs { display: none !important; }
     .panel { display: flex !important; }
     .subtabs { display: none !important; }
+    .groove-sheet, .groove-sheet-scrim { display: none !important; }
     .subpanel { display: flex !important; flex: none !important; overflow-y: visible !important; }
     #keysPanel { grid-area: keys; }
 
@@ -761,6 +818,11 @@
     <div class="io-row single">
       <button class="io-btn" id="exportSongWavBtn">⇩ EXPORT SONG WAV</button>
     </div>
+    <div class="io-row">
+      <button class="io-btn" id="exportSongBtn">⇩ EXPORT SONG</button>
+      <button class="io-btn" id="importSongBtn">⇧ IMPORT SONG</button>
+      <input type="file" id="importSongFile" accept="application/json" hidden>
+    </div>
 
     <div class="row-label">File · export saves the current pattern</div>
     <div class="io-row">
@@ -841,6 +903,23 @@
   <div class="dismiss">tap anywhere to close</div>
 </div>
 <div class="overlay" id="grooveOverlay"></div>
+<div class="groove-sheet-scrim" id="grooveSheetScrim"></div>
+<div class="groove-sheet" id="grooveSheet">
+  <div class="groove-sheet-handle"></div>
+  <button class="groove-sheet-close" id="grooveSheetClose" aria-label="Close">✕</button>
+  <div class="groove-sheet-step">
+    <button class="groove-sheet-arrow" id="grooveSheetPrev" aria-label="Previous groove">▲</button>
+    <div class="groove-sheet-center">
+      <div class="groove-sheet-cat" id="grooveSheetCat"></div>
+      <button class="groove-sheet-name" id="grooveSheetName"></button>
+    </div>
+    <button class="groove-sheet-arrow" id="grooveSheetNext" aria-label="Next groove">▼</button>
+  </div>
+  <div class="hint">tap name to load · ▲▼ to browse</div>
+  <div class="io-row single">
+    <button class="io-btn" id="grooveSheetClearBtn">Clear Pattern</button>
+  </div>
+</div>
 <div class="overlay" id="chainOverlay">
   <h2>Song chain</h2>
   <div class="chain-preview" id="chainPreview">(empty)</div>
@@ -3059,10 +3138,20 @@
   grooveDismissHint.textContent = 'tap outside a row to close';
   grooveOverlay.appendChild(grooveDismissHint);
 
+  const beatsGridSubtab = document.querySelector('#beatsPanel .subtab[data-sub="beatsGrid"]');
   grooveBtn.addEventListener('pointerdown', e => {
     e.preventDefault();
     unlock();
-    grooveOverlay.classList.add('on');
+    if (desktopMQ.matches) {
+      grooveOverlay.classList.add('on');
+      return;
+    }
+    if (!beatsGridSubtab.classList.contains('on')) activateSubtab(beatsGridSubtab);
+    document.getElementById('beatsGrid').scrollTop = 0;
+    grooveStepIndex = 0;
+    renderGrooveStep();
+    grooveSheet.classList.add('on');
+    grooveSheetScrim.classList.add('on');
   });
   // background tap dismisses; row taps below stopPropagation so they don't
   // also trigger this
@@ -3123,6 +3212,100 @@
       toast(groove.label + ' loaded');
     });
   });
+
+  // ---------------- groove stepper (mobile/tablet bottom sheet) ----------------
+  const grooveFlat = GROOVE_CATEGORIES.flatMap(c => c.items);
+  const grooveFlatCats = GROOVE_CATEGORIES.flatMap(c => c.items.map(() => c.label));
+  let grooveStepIndex = 0;
+
+  const grooveSheet = document.getElementById('grooveSheet');
+  const grooveSheetScrim = document.getElementById('grooveSheetScrim');
+  const grooveSheetCat = document.getElementById('grooveSheetCat');
+  const grooveSheetName = document.getElementById('grooveSheetName');
+  const grooveSheetPrev = document.getElementById('grooveSheetPrev');
+  const grooveSheetNext = document.getElementById('grooveSheetNext');
+  const grooveSheetClearBtn = document.getElementById('grooveSheetClearBtn');
+  const grooveSheetClose = document.getElementById('grooveSheetClose');
+  grooveSheetClearBtn.dataset.label = 'Clear Pattern';
+
+  // Same base-application lines applyGrooveSong uses, plus section B's
+  // pattern ("the main loop") via applyPatternOnly (already strips bpm/
+  // swing/humanize so it can't fight the setBpm/setSwing/setHumanize calls
+  // just above it). Deliberately stops there — no slots writes, no
+  // songChain, no persistSlots/persistSong/refreshSlotUI — that only
+  // happens when the user actually commits by tapping the name.
+  function previewGroove(g) {
+    selectWave(document.querySelector(`.wave-btn[data-wave="${g.base.wave}"]`));
+    Object.keys(g.base.knobs).forEach(name => { params[name].v = g.base.knobs[name]; applyParam(name); });
+    if (g.base.bpm) setBpm(g.base.bpm);
+    if (g.base.swing !== undefined) setSwing(g.base.swing);
+    if (g.base.humanize !== undefined) setHumanize(g.base.humanize);
+    calmLfoRate = g.base.calmLfoRate || 0;
+    calmLfoDepth = g.base.calmLfoDepth || 0;
+    applyCalmLfo();
+    const main = g.sections.find(s => s.id === 'B') || g.sections[0];
+    applyPatternOnly(main.pattern);
+    renderAllSlots();
+    if (!playing) startSeq();
+  }
+
+  function renderGrooveStep() {
+    const g = grooveFlat[grooveStepIndex];
+    cancelGrooveArm(grooveSheetName);
+    cancelGrooveArm(grooveSheetClearBtn);
+    grooveSheetCat.textContent = grooveFlatCats[grooveStepIndex];
+    grooveSheetName.textContent = g.label;
+    grooveSheetName.dataset.label = g.label;
+    previewGroove(g);
+  }
+
+  function stepGroove(delta) {
+    const total = grooveFlat.length;
+    grooveStepIndex = (grooveStepIndex + delta + total) % total;
+    renderGrooveStep();
+  }
+
+  function closeGrooveSheet() {
+    grooveSheet.classList.remove('on');
+    grooveSheetScrim.classList.remove('on');
+  }
+
+  grooveSheetPrev.addEventListener('pointerdown', e => { e.preventDefault(); unlock(); stepGroove(-1); });
+  grooveSheetNext.addEventListener('pointerdown', e => { e.preventDefault(); unlock(); stepGroove(1); });
+
+  // Commit — identical branch to the groove-row handler above, just
+  // retargeted at the one persistent name element instead of a per-row
+  // button. armGrooveConfirm/cancelGrooveArm are reused unmodified.
+  grooveSheetName.addEventListener('pointerdown', e => {
+    e.preventDefault(); e.stopPropagation(); unlock();
+    cancelGrooveArm(grooveSheetClearBtn);
+    const g = grooveFlat[grooveStepIndex];
+    const slotsOccupied = !!(slots.A || slots.B || slots.C || slots.D);
+    if (slotsOccupied && !grooveSheetName.classList.contains('confirm')) {
+      armGrooveConfirm(grooveSheetName, 'Tap again to overwrite Slots A-D');
+      return;
+    }
+    cancelGrooveArm(grooveSheetName);
+    applyGrooveSong(g);
+    toast(g.label + ' loaded');
+    closeGrooveSheet();
+  });
+
+  grooveSheetClearBtn.addEventListener('pointerdown', e => {
+    e.preventDefault(); e.stopPropagation(); unlock();
+    cancelGrooveArm(grooveSheetName);
+    if (!grooveSheetClearBtn.classList.contains('confirm')) {
+      armGrooveConfirm(grooveSheetClearBtn, 'Tap again to clear');
+      return;
+    }
+    cancelGrooveArm(grooveSheetClearBtn);
+    applyState({});
+    toast('Pattern cleared');
+    closeGrooveSheet();
+  });
+
+  grooveSheetClose.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); closeGrooveSheet(); });
+  grooveSheetScrim.addEventListener('pointerdown', closeGrooveSheet);
 
   // ---------------- mutate ----------------
   // lightly varies the current pattern in place — flips each drum/accent step
@@ -3421,6 +3604,83 @@
     importFile.value = ''; // allow re-importing the same filename later
   });
 
+  // ---------------- whole-song export/import (JSON) ----------------
+  // sibling to EXPORT/IMPORT above, one tier up: captures every slot plus
+  // the patch (wave/knobs) plus the chain order, not just one pattern —
+  // the reloadable-data counterpart to EXPORT SONG WAV's audio render.
+  const exportSongBtn = document.getElementById('exportSongBtn');
+  const importSongBtn = document.getElementById('importSongBtn');
+  const importSongFile = document.getElementById('importSongFile');
+
+  exportSongBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    unlock();
+    const payload = {
+      app: 'ps1-pocket-synth', version: 1,
+      song: {
+        base: {
+          wave: currentWave,
+          knobs: Object.fromEntries(Object.keys(params).map(name => [name, params[name].v])),
+          bpm, swing: Math.round(swing * 100), humanize: Math.round(humanize * 100),
+          calmLfoRate, calmLfoDepth,
+        },
+        slots: { ...slots },
+        chainOrder: [...songChain],
+      },
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    a.href = url;
+    a.download = `ps1-song-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast('Song exported');
+  });
+
+  importSongBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    unlock();
+    importSongFile.click();
+  });
+  importSongFile.addEventListener('change', () => {
+    const file = importSongFile.files && importSongFile.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        const song = parsed && parsed.song ? parsed.song : parsed;
+        selectWave(document.querySelector(`.wave-btn[data-wave="${song.base.wave}"]`));
+        Object.keys(song.base.knobs).forEach(name => { params[name].v = song.base.knobs[name]; applyParam(name); });
+        if (song.base.bpm) setBpm(song.base.bpm);
+        if (song.base.swing !== undefined) setSwing(song.base.swing);
+        if (song.base.humanize !== undefined) setHumanize(song.base.humanize);
+        calmLfoRate = song.base.calmLfoRate || 0;
+        calmLfoDepth = song.base.calmLfoDepth || 0;
+        applyCalmLfo();
+        slots = { ...song.slots };
+        songChain = [...song.chainOrder];
+        songPos = 0;
+        persistSlots();
+        persistSong();
+        refreshSlotUI();
+        renderAllSlots();
+        renderChainPreview();
+        if (songChain.length && slots[songChain[0]]) applyPatternOnly(slots[songChain[0]]);
+        if (!playing) startSeq();
+        toast('Song imported');
+      } catch (err) {
+        toast('Could not read that file');
+      }
+    };
+    reader.readAsText(file);
+    importSongFile.value = '';
+  });
+
   // ---------------- audio export (WAV) ----------------
   // encodes a rendered AudioBuffer as 16-bit PCM WAV — no external library needed
   function audioBufferToWavBlob(buffer) {
@@ -3664,6 +3924,7 @@
       chainRelocator.moveTo(transportEl);
       songRelocator.moveTo(transportEl);
       saveRelocator.moveTo(saveMenuInner);
+      closeGrooveSheet();
     } else {
       chainRelocator.restore();
       songRelocator.restore();
@@ -3702,16 +3963,18 @@
   // ---------------- subtabs (Keys: PATCH/PLAY · Beats: GRID/FEEL/SAVE) ----------------
   // scoped per group so Keys' subtabs and Beats' subtabs don't clear each
   // other's .on state the way a single global querySelectorAll would
-  document.querySelectorAll('.subtabs').forEach(group => {
+  // extracted so grooveBtn's handler can also force-switch to GRID, not
+  // just the per-button click listeners below — behavior is unchanged
+  function activateSubtab(subEl) {
+    const group = subEl.closest('.subtabs');
     const parent = group.parentElement; // #keysPanel or #beatsPanel
-    group.querySelectorAll('.subtab').forEach(sub => {
-      sub.addEventListener('pointerdown', () => {
-        group.querySelectorAll('.subtab').forEach(s => s.classList.remove('on'));
-        parent.querySelectorAll(':scope > .subpanel').forEach(p => p.classList.remove('on'));
-        sub.classList.add('on');
-        document.getElementById(sub.dataset.sub).classList.add('on');
-      });
-    });
+    group.querySelectorAll('.subtab').forEach(s => s.classList.remove('on'));
+    parent.querySelectorAll(':scope > .subpanel').forEach(p => p.classList.remove('on'));
+    subEl.classList.add('on');
+    document.getElementById(subEl.dataset.sub).classList.add('on');
+  }
+  document.querySelectorAll('.subtab').forEach(sub => {
+    sub.addEventListener('pointerdown', () => activateSubtab(sub));
   });
 
   // ---------------- synth voices ----------------
