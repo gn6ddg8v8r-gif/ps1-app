@@ -314,6 +314,10 @@
   .subpanel.on { display: flex; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 
   .row-label { font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.5; margin: 10px 2px 5px; flex-shrink: 0; }
+  /* #beatsSave has the least vertical slack of any mobile subtab — tightened
+     specifically here (not globally) to fit the 4 extra save-slot buttons
+     without reopening scroll on an iPhone-SE-class screen */
+  #beatsSave .row-label { margin-top: 7px; margin-bottom: 3px; }
 
   .waves { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
   .wave-btn {
@@ -530,6 +534,7 @@
   .io-btn:disabled { opacity: 0.5; }
   .io-btn.rec-armed { background: #D8322F; color: #fff; animation: pulse 0.7s infinite alternate; }
   .io-btn.fill-armed { background: #D8322F; color: #fff; animation: pulse 0.7s infinite alternate; }
+  .io-btn.on { background: var(--accent); color: #fff; }
   .io-row.single { grid-template-columns: 1fr; }
 
   .rec-btn {
@@ -808,6 +813,10 @@
       <button class="slot-btn" data-slot="B">B</button>
       <button class="slot-btn" data-slot="C">C</button>
       <button class="slot-btn" data-slot="D">D</button>
+      <button class="slot-btn" data-slot="E">E</button>
+      <button class="slot-btn" data-slot="F">F</button>
+      <button class="slot-btn" data-slot="G">G</button>
+      <button class="slot-btn" data-slot="H">H</button>
     </div>
 
     <div class="row-label">Song · build a chain from your slots, then play it back</div>
@@ -928,6 +937,13 @@
     <button class="chip" data-add="B">+ B</button>
     <button class="chip" data-add="C">+ C</button>
     <button class="chip" data-add="D">+ D</button>
+    <button class="chip" data-add="E">+ E</button>
+    <button class="chip" data-add="F">+ F</button>
+    <button class="chip" data-add="G">+ G</button>
+    <button class="chip" data-add="H">+ H</button>
+  </div>
+  <div class="io-row single">
+    <button class="io-btn" id="autoVaryBtn">🎲 VARY REPEATS: OFF</button>
   </div>
   <div class="io-row">
     <button class="io-btn" id="chainUndoBtn">Undo last</button>
@@ -3519,6 +3535,59 @@
     persistSong();
   });
 
+  // ---------------- auto-vary on repeat ----------------
+  // "repeat" = a run of consecutive identical letters in the *populated*
+  // chain (an 8-bar preset section is one run, not 8 independent repeats
+  // of itself) whose letter already had an earlier run somewhere before
+  // it. Reuses the pure mutateStr/mutateAccStr helpers built for the
+  // groove-preset retrofit's "C = MUTATE-style" section — same tracks/
+  // probabilities as the live MUTATE button, Bass/Harmony untouched.
+  let autoVaryOn = false;
+  function varyPattern(state) {
+    return {
+      ...state,
+      Kick:  mutateStr(state.Kick,  MUTATE_PROB.Kick),
+      Snare: mutateStr(state.Snare, MUTATE_PROB.Snare),
+      Clap:  mutateStr(state.Clap,  MUTATE_PROB.Clap),
+      CHat:  mutateStr(state.CHat,  MUTATE_PROB.CHat),
+      OHat:  mutateStr(state.OHat,  MUTATE_PROB.OHat),
+      Acc:   mutateAccStr(state.Acc, 0.08),
+    };
+  }
+  function populatedChain() {
+    return songChain.filter(k => slots[k]);
+  }
+  function populatedIndexOf(pos) {
+    let n = -1;
+    for (let i = 0; i <= pos; i++) if (slots[songChain[i]]) n++;
+    return n;
+  }
+  // Decides what actually plays at index i of the played sequence `seq`.
+  // `cache` is a {key, pattern} box owned by the caller — live playback
+  // and a WAV export each get their own, so exporting mid-song can't
+  // disturb what the live session is currently hearing.
+  function patternForChainPos(seq, i, cache) {
+    const letter = seq[i];
+    const base = slots[letter];
+    if (!autoVaryOn) return base;
+    let runStart = i;
+    while (runStart > 0 && seq[runStart - 1] === letter) runStart--;
+    const isRepeat = seq.slice(0, runStart).includes(letter);
+    if (!isRepeat) return base;
+    if (cache.key !== runStart) { cache.key = runStart; cache.pattern = varyPattern(base); }
+    return cache.pattern;
+  }
+  const liveVaryCache = { key: null, pattern: null };
+
+  const autoVaryBtn = document.getElementById('autoVaryBtn');
+  autoVaryBtn.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    autoVaryOn = !autoVaryOn;
+    autoVaryBtn.classList.toggle('on', autoVaryOn);
+    autoVaryBtn.textContent = '🎲 VARY REPEATS: ' + (autoVaryOn ? 'ON' : 'OFF');
+    liveVaryCache.key = liveVaryCache.pattern = null;
+  });
+
   const songBtn = document.getElementById('songBtn');
   const songIndicator = document.getElementById('songIndicator');
   // finds the first populated slot at or after fromPos, wrapping at most
@@ -3538,7 +3607,8 @@
       const pos = firstPopulatedFrom(0);
       if (pos === undefined) { toast('Nothing saved in this chain yet'); return; }
       songPos = pos;
-      applyPatternOnly(slots[songChain[songPos]]);
+      liveVaryCache.key = liveVaryCache.pattern = null;
+      applyPatternOnly(patternForChainPos(populatedChain(), populatedIndexOf(songPos), liveVaryCache));
       songMode = true;
       songBtn.classList.add('on');
       songIndicator.classList.add('on');
@@ -3556,7 +3626,7 @@
     const pos = firstPopulatedFrom((songPos + 1) % songChain.length);
     if (pos === undefined) return; // nothing saved anywhere in the chain — leave current pattern alone
     songPos = pos;
-    applyPatternOnly(slots[songChain[songPos]]);
+    applyPatternOnly(patternForChainPos(populatedChain(), populatedIndexOf(songPos), liveVaryCache));
   }
 
   // ---------------- export / import ----------------
@@ -3836,7 +3906,7 @@
   async function exportSongWav() {
     if (exporting || exportSongWavBtn.disabled) return;
     if (songChain.length === 0) { toast('Build a chain first'); return; }
-    const populated = songChain.filter(k => slots[k]);
+    const populated = populatedChain(); // was: songChain.filter(k => slots[k]) — identical, now shared
     if (populated.length === 0) { toast('Nothing saved in this chain yet'); return; }
     if (populated.length > SONG_EXPORT_MAX_BARS) { toast('Chain too long to export (max ' + SONG_EXPORT_MAX_BARS + ' bars)'); return; }
 
@@ -3851,17 +3921,18 @@
                                 // no pattern application to compute
       const totalDur = bar * populated.length;
 
+      const exportVaryCache = { key: null, pattern: null }; // never shares state with live playback
       const triggerAll = () => {
         let t = 0;
-        for (const key of populated) {
-          applyPatternOnly(slots[key]);
+        populated.forEach((key, i) => {
+          applyPatternOnly(patternForChainPos(populated, i, exportVaryCache));
           for (let step = 0; step < STEPS; step++) {
             triggerStep(step, t);
             let d = stepDur();
             d *= step % 2 === 0 ? (1 + swing) : (1 - swing);
             t += d;
           }
-        }
+        });
       };
 
       await renderOffline(totalDur, triggerAll, 'ps1-song');
