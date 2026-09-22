@@ -199,10 +199,6 @@
     .plate { grid-area: plate; }
     .screen { grid-area: screen; }
     .tabs { display: none !important; }
-    /* hint text that would wrap this column's row-label onto a second line
-       and reopen the page scroll this layout is tuned to avoid — desktop
-       has the hover tooltip and Help for the same thing */
-    .mobile-only { display: none !important; }
     .panel { display: flex !important; }
     .subtabs { display: none !important; }
     .groove-sheet, .groove-sheet-scrim { display: none !important; }
@@ -519,8 +515,8 @@
   .chip.on { background: var(--accent); color: #fff; opacity: 1; }
   .voice-chips { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 8px; }
   .chord-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
-  /* the rows you can record onto — tapping the name arms that track */
-  .track.harmony .tname, .track.bass .tname { cursor: pointer; }
+  /* every row name is live: tap to arm (harmony/bass), hold to clear */
+  .track .tname { cursor: pointer; }
   .track.armed .tname { color: var(--accent); font-weight: 700; }
   /* REC armed on this one track — the row's own name doubles as its
      record light, in the same red as the REC buttons */
@@ -587,6 +583,7 @@
   .io-btn.fill-armed { background: #D8322F; color: #fff; animation: pulse 0.7s infinite alternate; }
   .io-btn.on { background: var(--accent); color: #fff; }
   .io-row.single { grid-template-columns: 1fr; }
+  .io-row.three { grid-template-columns: repeat(3, 1fr); }
 
   .rec-btn {
     font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 0.06em;
@@ -820,12 +817,13 @@
       </div>
     </div>
 
-    <div class="row-label">Pattern · tap drums to toggle · tap bass to cycle notes<span class="mobile-only"> · tap H1-H4/Bass names to record</span></div>
+    <div class="row-label">Pattern · tap drums · tap bass to cycle notes · tap names to record, hold to clear</div>
     <div class="grid" id="grid"></div>
 
-    <div class="io-row">
+    <div class="io-row three">
       <button class="io-btn" id="mutateBtn">🎲 MUTATE</button>
       <button class="io-btn" id="fillBtn">🔥 FILL</button>
+      <button class="io-btn" id="undoBtn" disabled>↶ UNDO</button>
     </div>
     <div class="keyboard-wrap mini">
       <div class="mini-oct">
@@ -946,7 +944,11 @@
   a note to erase it, tap a sustained step to trim from there on, or drag from a note
   across empty steps to extend how long it rings ·
   tap a row's <b>H1-H4</b> or <b>Bass</b> name to arm recording straight onto that track — the
-  name turns red while it's armed, and tapping it again disarms and goes back to AUTO.
+  name turns red while it's armed, and tapping it again disarms and goes back to AUTO ·
+  <b>hold any row name</b> (drums included) to wipe just that track ·
+  <b>↶ UNDO</b> takes back anything that destroys work — a take, MUTATE, a clear, a
+  groove or slot load, a cell edit — up to 20 steps back. It covers the pattern and the
+  sound in front of you, not your saved slots.
   Bass holds one note per step and always sounds in its own low octave, so a note you play
   onto it keeps its letter and drops its octave, and a new note replaces whatever that step
   held ·
@@ -1721,6 +1723,7 @@
   DRUMS.forEach((trk, ti) => {
     const row = document.createElement('div');
     row.className = 'track';
+    row.dataset.drum = String(ti); // lets clearTrackRow find this row's pattern
     const lbl = document.createElement('div');
     lbl.className = 'tname';
     lbl.textContent = trk.name;
@@ -1826,6 +1829,9 @@
   // same id startVoice/stopVoice already use (pointerId, or 'kb'+code).
   let sustainMode = false;
   const activeRecordings = new Map();
+  // set when REC arms, spent on the take's first note — so one undo drops a
+  // whole take, and arming without playing anything costs nothing
+  let takeSnapshotPending = false;
 
   // brief "a note just landed here" wash on a harmony row — only used in
   // AUTO mode, where the target voice moves around; manual mode already
@@ -1854,6 +1860,7 @@
       if (d < bestD) { bestD = d; best = st.step; bestTime = st.time; }
     });
     if (best === null) return;
+    if (takeSnapshotPending) { pushUndo('that take'); takeSnapshotPending = false; }
 
     // bass row: one note per step, and the row is a single octave of note
     // names played at its own fixed low register — so a played note keeps
@@ -1967,6 +1974,7 @@
     if (!el) return;
     e.preventDefault();
     unlock();
+    pushUndo('that edit'); // one per gesture — a drag across cells is a single undo
     const s = +el.dataset.s;
     if (el.dataset.bass) {
       bassPattern[s] = bassPattern[s] >= SCALE.length - 1 ? -1 : bassPattern[s] + 1;
@@ -2150,6 +2158,7 @@
   const miniPlay = document.getElementById('miniPlay');
   function setRec(v, msg) {
     recArmed = v;
+    takeSnapshotPending = v;
     recBtn.classList.toggle('armed', v);
     miniRec.classList.toggle('armed', v);
     updateArmedRow(); // an armed voice's row name is a record light too
@@ -2209,16 +2218,28 @@
     });
   });
 
-  // tapping a row's own name (H1-H4 or Bass) arms REC straight onto that
-  // track — the grid's version of the chips, so a take can be set up
-  // without leaving Beats. Tapping the armed one again disarms it and goes
-  // back to AUTO. On click rather than this app's usual pointerdown: the
-  // Grid subtab scrolls on short phones, and a scroll that happens to
-  // start on a row name must not arm a track.
-  armableRows.forEach(row => {
-    const target = voiceOf(row);
+  // A row name does two jobs, the same tap/hold split the mixer's channel
+  // names use. Tap arms REC straight onto that track (H1-H4 and Bass — the
+  // drum rows have nothing to play into), so a take can be set up without
+  // leaving Beats; tapping the armed one again disarms and goes back to
+  // AUTO. Hold wipes the track, on any row, with undo as the safety net
+  // instead of a confirm step.
+  // Tap is a click rather than this app's usual pointerdown: the Grid subtab
+  // scrolls on short phones, and a scroll that happens to start on a row
+  // name must not arm a track.
+  document.querySelectorAll('#grid .track').forEach(row => {
     const lbl = row.querySelector('.tname');
+    const target = row.dataset.voice ? voiceOf(row) : null;
+    let holdT = null, held = false;
+    lbl.addEventListener('pointerdown', () => {
+      held = false;
+      holdT = setTimeout(() => { held = true; clearTrackRow(row); }, 500);
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
+      lbl.addEventListener(ev, () => clearTimeout(holdT)));
     lbl.addEventListener('click', () => {
+      if (held) { held = false; return; } // the hold already cleared this row
+      if (target === null) return;
       unlock();
       if (recArmed && recordTargetVoice === target) {
         setRecordTargetVoice('auto');
@@ -3214,6 +3235,7 @@
   // this is pure orchestration, no new audio-graph nodes, so it needs no
   // changes to exportWav's save/restore list.
   function applyGroove(g) {
+    pushUndo('loading that groove');
     applyState(g.pattern);
     selectWave(document.querySelector(`.wave-btn[data-wave="${g.wave}"]`));
     Object.keys(g.knobs).forEach(name => { params[name].v = g.knobs[name]; applyParam(name); });
@@ -3230,6 +3252,7 @@
   // the caller's job (the click handler below) — by the time this runs,
   // clobbering A-D is already approved.
   function applyGrooveSong(g) {
+    pushUndo('loading that groove');
     selectWave(document.querySelector(`.wave-btn[data-wave="${g.base.wave}"]`));
     Object.keys(g.base.knobs).forEach(name => { params[name].v = g.base.knobs[name]; applyParam(name); });
     if (g.base.bpm) setBpm(g.base.bpm);
@@ -3331,6 +3354,7 @@
       if (btn.classList.contains('clear')) {
         if (!btn.classList.contains('confirm')) { armGrooveConfirm(btn, 'Tap again to clear'); return; }
         cancelGrooveArm(btn);
+        pushUndo('clearing the pattern');
         applyState({});
         toast('Pattern cleared');
         grooveOverlay.classList.remove('on');
@@ -3444,6 +3468,7 @@
       return;
     }
     cancelGrooveArm(grooveSheetClearBtn);
+    pushUndo('clearing the pattern');
     applyState({});
     toast('Pattern cleared');
     closeGrooveSheet();
@@ -3451,6 +3476,62 @@
 
   grooveSheetClose.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); closeGrooveSheet(); });
   grooveSheetScrim.addEventListener('pointerdown', closeGrooveSheet);
+
+  // ---------------- undo ----------------
+  // One entry is the whole pattern plus the patch. That's a few hundred bytes
+  // of JSON, and unlike per-edit deltas it can't drift out of sync with what's
+  // on screen. Pushed before anything that destroys work — a take, MUTATE, a
+  // clear, a groove/slot/import load — and never during playback, so song mode
+  // swapping patterns every bar can't flood it. Saved slots are not covered:
+  // undo restores what's in front of you, not your library.
+  const UNDO_DEPTH = 20;
+  const undoStack = [];
+  const undoBtn = document.getElementById('undoBtn');
+  function updateUndoBtn() {
+    undoBtn.disabled = undoStack.length === 0;
+  }
+  function pushUndo(label) {
+    undoStack.push({
+      label,
+      state: currentState(),
+      wave: currentWave,
+      knobs: Object.fromEntries(Object.keys(params).map(n => [n, params[n].v])),
+    });
+    if (undoStack.length > UNDO_DEPTH) undoStack.shift();
+    updateUndoBtn();
+  }
+  function undo() {
+    const s = undoStack.pop();
+    updateUndoBtn();
+    if (!s) { toast('Nothing to undo'); return; }
+    applyState(s.state);
+    selectWave(document.querySelector(`.wave-btn[data-wave="${s.wave}"]`));
+    Object.keys(s.knobs).forEach(n => { params[n].v = s.knobs[n]; applyParam(n); });
+    renderAllSlots(); // the four on-screen knob dials
+    toast('Undid ' + s.label);
+  }
+  undoBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    undo();
+  });
+
+  // wipes one track, from a hold on its row name
+  function clearTrackRow(row) {
+    const name = row.querySelector('.tname').textContent;
+    pushUndo('clearing ' + name);
+    if (row.classList.contains('harmony')) {
+      const v = +row.dataset.voice;
+      for (let s = 0; s < STEPS; s++) { harmonyPatterns[v][s] = -1; renderHarmonyCell(v, s); }
+    } else if (row.classList.contains('bass')) {
+      for (let s = 0; s < STEPS; s++) { bassPattern[s] = -1; renderBassCell(s); }
+    } else if (row.classList.contains('acc')) {
+      for (let s = 0; s < STEPS; s++) { accentPattern[s] = 0; renderAccCell(s); }
+    } else {
+      const ti = +row.dataset.drum;
+      for (let s = 0; s < STEPS; s++) { drumPattern[ti][s] = false; drumCells[ti][s].classList.remove('on'); }
+    }
+    toast(name + ' cleared — UNDO brings it back');
+  }
 
   // ---------------- mutate ----------------
   // lightly varies the current pattern in place — flips each drum/accent step
@@ -3478,6 +3559,7 @@
   document.getElementById('mutateBtn').addEventListener('pointerdown', e => {
     e.preventDefault();
     unlock();
+    pushUndo('MUTATE');
     mutatePattern();
   });
 
@@ -3588,6 +3670,7 @@
         persistSlots();
         toast('Saved to slot ' + key);
       } else if (slots[key]) {
+        pushUndo('loading slot ' + key);
         applyState(slots[key]);
         if (!playing) startSeq();
         toast('Loaded slot ' + key);
@@ -3784,6 +3867,7 @@
       try {
         const parsed = JSON.parse(reader.result);
         const groove = parsed && parsed.groove ? parsed.groove : parsed; // accept raw state too
+        pushUndo('the import');
         applyState(groove);
         toast('Groove imported');
       } catch (err) {
