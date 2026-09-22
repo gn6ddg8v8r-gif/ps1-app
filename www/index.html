@@ -221,7 +221,9 @@
     }
     #beatsGrid { grid-area: grid; }
     #beatsFeel { grid-area: feel; }
-    #beatsPanel > .hint { grid-area: hint; }
+    /* both panels are on screen here, so "flip to keys" is meaningless —
+       and this column has no vertical slack to spend on it */
+    #beatsPanel > .hint { display: none !important; }
 
     .keyboard-wrap { min-height: 280px !important; margin-top: 4px !important; }
     .keyboard-wrap.mini { display: none !important; }
@@ -513,6 +515,16 @@
     opacity: 0.7;
   }
   .chip.on { background: var(--accent); color: #fff; opacity: 1; }
+  /* pattern pages: the strip only appears once a pattern is longer than the
+     one bar the grid can show, so a 1-bar pattern looks exactly as it did */
+  .page-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; flex-shrink: 0; }
+  .page-group { display: flex; align-items: center; gap: 6px; }
+  .page-group.off { display: none; }
+  .page-label, .page-hint { font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.5; }
+  .bars-chip { padding: 4px 10px; opacity: 1; }
+  .page-chip { width: 32px; padding: 4px 0; }
+  .page-chip.playing { opacity: 1; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.3); }
+  .page-chip.pinned { background: var(--accent); color: #fff; opacity: 1; }
   .voice-chips { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 8px; }
   .chord-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
   /* every row name is live: tap to arm (harmony/bass), hold to clear */
@@ -818,6 +830,17 @@
     </div>
 
     <div class="row-label">Pattern · tap drums · tap bass to cycle notes · tap names to record, hold to clear</div>
+    <div class="page-row" id="pageRow">
+      <button class="chip bars-chip" id="barsBtn">1 BAR</button>
+      <span class="page-group off" id="pageGroup">
+        <span class="page-label">Page</span>
+        <button class="chip page-chip" data-page="0">1</button>
+        <button class="chip page-chip" data-page="1">2</button>
+        <button class="chip page-chip" data-page="2">3</button>
+        <button class="chip page-chip" data-page="3">4</button>
+        <span class="page-hint" id="pageHint">follows the beat</span>
+      </span>
+    </div>
     <div class="grid" id="grid"></div>
 
     <div class="io-row three">
@@ -952,6 +975,12 @@
   Bass holds one note per step and always sounds in its own low octave, so a note you play
   onto it keeps its letter and drops its octave, and a new note replaces whatever that step
   held ·
+  <b>1 BAR / 2 BARS / 4 BARS</b> on the FEEL subtab sets how long the pattern runs before it
+  loops. Anything longer than a bar appears as pages of 16 steps, with a <b>Page</b> strip
+  above the grid: the view rides along with the beat as it plays, and tapping a page pins it
+  there so you can edit one bar while the rest keeps running (tap the pinned page again to
+  follow along). Each save remembers its own length, and a song chain plays every link all
+  the way through, so a 4-bar section lasts 4 bars ·
   <b>Acc</b> steps make all drums hit harder ·
   the swing chips (<b>STR8 / 54 / 58 / 62 / 66</b>) jump to classic hardware-sampler swing feels ·
   <b>🎲 MUTATE</b> lightly varies the current drum pattern instead of replacing it ·
@@ -1550,7 +1579,23 @@
   }
 
   // ---------------- pattern data ----------------
-  const STEPS = 16;
+  // A bar is 16 steps and the grid shows exactly one bar at a time; the
+  // pattern itself can be 1, 2 or 4 of those bars ("pages"), so anything
+  // counting a bar or a grid column uses STEPS_PER_PAGE, and anything
+  // walking the pattern uses patLen. Arrays are always allocated at the
+  // maximum so growing a pattern never reallocates.
+  const STEPS_PER_PAGE = 16;
+  const MAX_PAGES = 4;
+  const MAX_STEPS = STEPS_PER_PAGE * MAX_PAGES;
+  let patLen = STEPS_PER_PAGE;
+  let gridPage = 0;      // which page the grid is showing
+  let followPage = true; // view follows playback until a page is pinned
+  const pageCount = () => patLen / STEPS_PER_PAGE;
+  // a pattern from a file: steps, rounded to a whole number of bars, 1-4
+  function clampPatLen(steps) {
+    const pages = Math.min(MAX_PAGES, Math.max(1, Math.round(steps / STEPS_PER_PAGE)));
+    return pages * STEPS_PER_PAGE;
+  }
   const DRUMS = [
     { name: 'Kick',  play: playKick },
     { name: 'Snare', play: playSnare },
@@ -1558,7 +1603,7 @@
     { name: 'CHat',  play: playHat },
     { name: 'OHat',  play: playOpenHat },
   ];
-  const drumPattern = DRUMS.map(() => new Array(STEPS).fill(false));
+  const drumPattern = DRUMS.map(() => new Array(MAX_STEPS).fill(false));
 
   // bass: -1 = off, else index into SCALE (full chromatic octave, semitone
   // 0-11 — names come from NOTE_NAMES below, same array harmony uses)
@@ -1566,11 +1611,11 @@
   // chord mode: semitone offsets from the root, auto-voiced onto extra
   // harmony voices from a single key tap
   const CHORD_TYPES = { off: [], maj: [4, 7], min: [3, 7], dom7: [4, 7, 10], min7: [3, 7, 10] };
-  const bassPattern = new Array(STEPS).fill(-1);
+  const bassPattern = new Array(MAX_STEPS).fill(-1);
 
   // accent: 0 = off, 1 = normal (today's original 1.35x — kept at this
   // index so legacy '1'-digit saves still sound the same), 2 = hard
-  const accentPattern = new Array(STEPS).fill(0);
+  const accentPattern = new Array(MAX_STEPS).fill(0);
   const ACCENT_VEL = [1, 1.35, 1.6];
   // the master limiter squashes most of a pure gain boost, so accent also
   // reshapes envelope/tone — a limiter can't undo a shorter decay or a
@@ -1582,7 +1627,7 @@
   // (sustain — continue the previous note in this voice, don't retrigger),
   // >=0 = a new note-on (MIDI number), played through the synth engine.
   const HARMONY_VOICES = 4;
-  const harmonyPatterns = [0, 1, 2, 3].map(() => new Array(STEPS).fill(-1));
+  const harmonyPatterns = [0, 1, 2, 3].map(() => new Array(MAX_STEPS).fill(-1));
   const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
   let bpm = 120;
@@ -1627,7 +1672,7 @@
     const jitterT = () => Math.max(0, t + (Math.random() - 0.5) * humanize * 0.016);
     const jitterV = v => v * (1 + (Math.random() - 0.5) * humanize * 0.3);
     drumPattern.forEach((row, ti) => {
-      const src = (fillActive && step >= 12) ? fillOverride[ti] : row;
+      const src = (fillActive && step % STEPS_PER_PAGE >= 12) ? fillOverride[ti] : row;
       if (src[step]) DRUMS[ti].play(jitterT(), jitterV(vel), accentPattern[step]);
     });
     if (bassPattern[step] >= 0) playBass(jitterT(), SCALE[bassPattern[step]], jitterV(vel));
@@ -1644,7 +1689,7 @@
       while (true) {
         total += stepDur() * (s % 2 === 0 ? 1 + swing : 1 - swing);
         s++;
-        if (s >= STEPS || harmonyPatterns[v][s] !== -2) break;
+        if (s >= patLen || harmonyPatterns[v][s] !== -2) break;
       }
       playSynthNote(t, val, total * 0.92);
     }
@@ -1652,7 +1697,7 @@
   function scheduleStep(step, t) {
     // arm check must run BEFORE triggerStep so step 12 itself, not just
     // 13-15, gets the fill
-    if (step === 12 && fillArmed) {
+    if (step % STEPS_PER_PAGE === 12 && fillArmed) {
       fillOverride = buildFillOverride();
       fillActive = true;
       fillArmed = false;
@@ -1662,7 +1707,8 @@
     stepTimesRing.push({ step, time: t });
     if (stepTimesRing.length > 48) stepTimesRing.shift();
     uiStepQueue.push({ step, time: t });
-    if (step === 0 && seqStepScheduled) onBarStart();
+    if (step % STEPS_PER_PAGE === 0 && seqStepScheduled) onBarStart();
+    if (step === 0 && seqStepScheduled) onPatternStart();
     seqStepScheduled = true;
   }
 
@@ -1676,6 +1722,11 @@
       fillOverride = null;
       updateFillBtn();
     }
+  }
+  // a whole pass of the pattern just finished — however many bars it was.
+  // That, not the bar, is where the song chain moves on, so a 4-bar section
+  // plays all the way through before the next link.
+  function onPatternStart() {
     advanceSong();
   }
 
@@ -1685,7 +1736,7 @@
       let d = stepDur();
       d *= currentStep % 2 === 0 ? (1 + swing) : (1 - swing);
       nextStepTime += d;
-      currentStep = (currentStep + 1) % STEPS;
+      currentStep = (currentStep + 1) % patLen;
     }
   }
 
@@ -1729,7 +1780,7 @@
     lbl.textContent = trk.name;
     row.appendChild(lbl);
     drumCells[ti] = [];
-    for (let s = 0; s < STEPS; s++) {
+    for (let s = 0; s < STEPS_PER_PAGE; s++) {
       const c = document.createElement('div');
       c.className = 'cell';
       c.dataset.t = ti; c.dataset.s = s;
@@ -1748,7 +1799,7 @@
     lbl.textContent = 'Bass';
     lbl.title = 'Tap to record onto Bass';
     row.appendChild(lbl);
-    for (let s = 0; s < STEPS; s++) {
+    for (let s = 0; s < STEPS_PER_PAGE; s++) {
       const c = document.createElement('div');
       c.className = 'cell';
       c.dataset.bass = '1'; c.dataset.s = s;
@@ -1773,7 +1824,7 @@
     lbl.textContent = 'H' + (v + 1);
     lbl.title = 'Tap to record onto H' + (v + 1);
     row.appendChild(lbl);
-    for (let s = 0; s < STEPS; s++) {
+    for (let s = 0; s < STEPS_PER_PAGE; s++) {
       const c = document.createElement('div');
       c.className = 'cell';
       c.dataset.harmony = String(v); c.dataset.s = s;
@@ -1794,7 +1845,7 @@
     lbl.className = 'tname';
     lbl.textContent = 'Acc';
     row.appendChild(lbl);
-    for (let s = 0; s < STEPS; s++) {
+    for (let s = 0; s < STEPS_PER_PAGE; s++) {
       const c = document.createElement('div');
       c.className = 'cell';
       c.dataset.acc = '1'; c.dataset.s = s;
@@ -1804,23 +1855,109 @@
     grid.appendChild(row);
   }
 
+  // The grid is 16 columns showing one page of the pattern, so a step number
+  // and a column are no longer the same thing: cells carry their column in
+  // dataset.s, absStep turns that into the real step, and every render call
+  // takes a real step and quietly does nothing for steps on another page.
+  const pageOf = step => Math.floor(step / STEPS_PER_PAGE);
+  const absStep = col => gridPage * STEPS_PER_PAGE + col;
+  const onPage = step => pageOf(step) === gridPage;
+  const colOf = step => step - gridPage * STEPS_PER_PAGE;
+
+  function renderDrumCell(ti, s) {
+    if (!onPage(s)) return;
+    drumCells[ti][colOf(s)].classList.toggle('on', drumPattern[ti][s]);
+  }
   function renderBassCell(s) {
+    if (!onPage(s)) return;
     const v = bassPattern[s];
-    bassCells[s].classList.toggle('on', v >= 0);
-    bassCells[s].querySelector('.nl').textContent = v >= 0 ? NOTE_NAMES[v] : '';
+    const cell = bassCells[colOf(s)];
+    cell.classList.toggle('on', v >= 0);
+    cell.querySelector('.nl').textContent = v >= 0 ? NOTE_NAMES[v] : '';
   }
   function renderHarmonyCell(v, s) {
+    if (!onPage(s)) return;
     const val = harmonyPatterns[v][s];
-    const cell = harmonyCells[v][s];
+    const cell = harmonyCells[v][colOf(s)];
     cell.classList.toggle('on', val >= 0);
     cell.classList.toggle('tie', val === -2);
     cell.querySelector('.nl').textContent = val >= 0 ? NOTE_NAMES[val % 12] : '';
   }
   function renderAccCell(s) {
+    if (!onPage(s)) return;
     const v = accentPattern[s];
-    accCells[s].classList.toggle('on', v === 1);
-    accCells[s].classList.toggle('hard', v === 2);
+    accCells[colOf(s)].classList.toggle('on', v === 1);
+    accCells[colOf(s)].classList.toggle('hard', v === 2);
   }
+  // every visible cell, after a page turn or a wholesale pattern change
+  function renderPage() {
+    for (let col = 0; col < STEPS_PER_PAGE; col++) {
+      const s = absStep(col);
+      for (let ti = 0; ti < DRUMS.length; ti++) renderDrumCell(ti, s);
+      renderBassCell(s);
+      renderAccCell(s);
+      for (let v = 0; v < HARMONY_VOICES; v++) renderHarmonyCell(v, s);
+    }
+    renderPageChips();
+  }
+
+  // ---------------- pattern length & pages ----------------
+  const pageRow = document.getElementById('pageRow');
+  const pageHint = document.getElementById('pageHint');
+  const pageChips = [...document.querySelectorAll('.page-chip')];
+  const barsBtn = document.getElementById('barsBtn');
+  const pageGroup = document.getElementById('pageGroup');
+  const BAR_CHOICES = [1, 2, 4];
+
+  function renderPageChips() {
+    barsBtn.textContent = pageCount() === 1 ? '1 BAR' : pageCount() + ' BARS';
+    pageGroup.classList.toggle('off', pageCount() < 2); // nothing to page through in one bar
+    pageChips.forEach((chip, i) => {
+      chip.style.display = i < pageCount() ? '' : 'none';
+      chip.classList.toggle('pinned', !followPage && i === gridPage);
+      chip.classList.toggle('playing', followPage && i === gridPage);
+    });
+    pageHint.textContent = followPage ? 'follows the beat' : 'pinned';
+  }
+  function setPage(p) {
+    gridPage = Math.max(0, Math.min(pageCount() - 1, p));
+    renderPage();
+  }
+  // `quiet` is for applyState, which sets the length as part of loading a
+  // pattern and does its own redraw afterwards
+  function setPatLen(len, quiet) {
+    const next = clampPatLen(len);
+    if (next !== patLen) {
+      if (!quiet) pushUndo('the pattern length');
+      patLen = next;
+      // shrinking leaves the steps past the new end untouched, so going back
+      // up to 4 bars brings that material back rather than silence
+      if (gridPage >= pageCount()) gridPage = 0;
+      if (currentStep >= patLen) currentStep = 0;
+    }
+    if (!quiet) {
+      renderPage();
+      toast(pageCount() === 1 ? '1 bar per pattern' : pageCount() + ' bars per pattern');
+    }
+  }
+
+  pageChips.forEach((chip, i) => {
+    chip.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      // tapping the pinned page releases it back to following playback
+      if (!followPage && gridPage === i) { followPage = true; renderPageChips(); return; }
+      followPage = false;
+      setPage(i);
+    });
+  });
+  // one chip cycling 1 -> 2 -> 4 bars, rather than three chips: this row sits
+  // in the one column of the desktop layout that has no height to spare
+  barsBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    unlock();
+    const next = BAR_CHOICES[(BAR_CHOICES.indexOf(pageCount()) + 1) % BAR_CHOICES.length];
+    setPatLen(next * STEPS_PER_PAGE);
+  });
 
   // sustain: while off (default), recording behaves exactly as before —
   // every note is a single-step blip. While on, a note's recorded length
@@ -1905,7 +2042,7 @@
     activeRecordings.delete(id);
     if (!ctx) return;
     const elapsed = ctx.currentTime - rec.refTime;
-    const maxStep = STEPS - 1 - rec.step; // never let a sustain wrap past the pattern end
+    const maxStep = patLen - 1 - rec.step; // never let a sustain wrap past the pattern end
     let acc = 0, n = 0, s = rec.step;
     while (n < maxStep) {
       const stepLen = stepDur() * (s % 2 === 0 ? 1 + swing : 1 - swing);
@@ -1921,7 +2058,7 @@
 
   let paintMode = null;
   function setDrumCell(el, force) {
-    const t = +el.dataset.t, s = +el.dataset.s;
+    const t = +el.dataset.t, s = absStep(+el.dataset.s);
     const val = force !== undefined ? force : !drumPattern[t][s];
     drumPattern[t][s] = val;
     el.classList.toggle('on', val);
@@ -1933,7 +2070,7 @@
   // to clean up a note-on's own trailing ties when the note itself is cleared
   function trimHarmonyTies(v, s) {
     let i = s;
-    while (i < STEPS && harmonyPatterns[v][i] === -2) {
+    while (i < patLen && harmonyPatterns[v][i] === -2) {
       harmonyPatterns[v][i] = -1;
       renderHarmonyCell(v, i);
       i++;
@@ -1975,7 +2112,7 @@
     e.preventDefault();
     unlock();
     pushUndo('that edit'); // one per gesture — a drag across cells is a single undo
-    const s = +el.dataset.s;
+    const s = absStep(+el.dataset.s);
     if (el.dataset.bass) {
       bassPattern[s] = bassPattern[s] >= SCALE.length - 1 ? -1 : bassPattern[s] + 1;
       renderBassCell(s);
@@ -2004,9 +2141,9 @@
       // must be able to extend past its current end, not treat its own
       // ties as someone else's territory
       let bs = s + 1;
-      while (bs < STEPS && harmonyPatterns[v][bs] === -2) bs++;
-      let boundary = STEPS;
-      for (; bs < STEPS; bs++) {
+      while (bs < patLen && harmonyPatterns[v][bs] === -2) bs++;
+      let boundary = patLen;
+      for (; bs < patLen; bs++) {
         if (harmonyPatterns[v][bs] !== -1) { boundary = bs; break; }
       }
       harmonyDrag = { voice: v, originStep: s, boundaryStep: boundary, extended: false, wasEmpty, cycleEligible };
@@ -2027,7 +2164,7 @@
       const cell = el && el.closest && el.closest('.cell');
       if (!cell || cell.dataset.harmony !== String(harmonyDrag.voice)) return;
       const { voice, originStep, boundaryStep } = harmonyDrag;
-      const hoverStep = +cell.dataset.s;
+      const hoverStep = absStep(+cell.dataset.s);
       const target = Math.min(hoverStep, boundaryStep - 1);
       // recompute the whole span every move (not incrementally) — a fast
       // drag can skip cells between move events, and this also handles
@@ -2043,7 +2180,7 @@
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const cell = el && el.closest && el.closest('.cell');
     if (cell && !cell.dataset.bass && !cell.dataset.harmony && !cell.dataset.acc) {
-      const t = +cell.dataset.t, s = +cell.dataset.s;
+      const t = +cell.dataset.t, s = absStep(+cell.dataset.s);
       if (drumPattern[t][s] !== paintMode) setDrumCell(cell, paintMode);
     }
   });
@@ -2086,11 +2223,16 @@
       latest = uiStepQueue.shift().step;
     }
     if (latest !== null) {
+      // the view rides along with playback unless a page has been pinned
+      if (followPage && pageOf(latest) !== gridPage) setPage(pageOf(latest));
       clearPlayhead();
-      drumCells.forEach(row => row[latest].classList.add('ph'));
-      bassCells[latest].classList.add('ph');
-      harmonyCells.forEach(row => row[latest].classList.add('ph'));
-      accCells[latest].classList.add('ph');
+      if (onPage(latest)) {
+        const col = colOf(latest);
+        drumCells.forEach(row => row[col].classList.add('ph'));
+        bassCells[col].classList.add('ph');
+        harmonyCells.forEach(row => row[col].classList.add('ph'));
+        accCells[col].classList.add('ph');
+      }
     }
   }
   updatePlayhead();
@@ -2445,14 +2587,14 @@
   // entries instead of hand-typed comma strings — length>1 backfills tie
   // (-2) steps, matching the exact format applyState() already parses
   function voice(entries) {
-    const a = new Array(STEPS).fill(-1);
+    const a = new Array(STEPS_PER_PAGE).fill(-1);
     entries.forEach(({ at, midi, len = 1 }) => {
       a[at] = midi;
-      for (let i = 1; i < len && at + i < STEPS; i++) a[at + i] = -2;
+      for (let i = 1; i < len && at + i < STEPS_PER_PAGE; i++) a[at + i] = -2;
     });
     return a.join(',');
   }
-  const NO_VOICE = new Array(STEPS).fill(-1).join(',');
+  const NO_VOICE = new Array(STEPS_PER_PAGE).fill(-1).join(',');
 
   const GROOVE_CATEGORIES = [
     {
@@ -3139,7 +3281,7 @@
 
   function deriveGenreArc(item) {
     const p = item.pattern;
-    const ZERO = '0'.repeat(STEPS), REST = '.'.repeat(STEPS);
+    const ZERO = '0'.repeat(STEPS_PER_PAGE), REST = '.'.repeat(STEPS_PER_PAGE);
     const { Kick, Snare, Clap, CHat, OHat, Bass, Acc, H1, H2, H3, H4 } = p;
     const base = { Kick, Snare, Clap, CHat, OHat, Bass, Acc, H1, H2, H3, H4 };
 
@@ -3187,15 +3329,14 @@
     // advance, import) invalidates a pending harmony pitch-cycle session —
     // it may be pointing at a cell whose meaning just changed underneath it
     endHarmonyPitchEdit();
-    DRUMS.forEach((trk, ti) => {
-      const str = state[trk.name] || '0'.repeat(STEPS);
-      for (let s = 0; s < STEPS; s++) {
-        drumPattern[ti][s] = str[s] === '1';
-        drumCells[ti][s].classList.toggle('on', drumPattern[ti][s]);
-      }
-    });
-    const bstr = state.Bass || '.'.repeat(STEPS);
-    const astr = state.Acc || '0'.repeat(STEPS);
+    // How long is the incoming pattern? Saves from before pattern pages have
+    // no `len` and 16-character rows, which is exactly one bar — so every
+    // older save, slot and groove preset still loads as the bar it was.
+    const inLen = clampPatLen(state.len || (state[DRUMS[0].name] || '').length || STEPS_PER_PAGE);
+    setPatLen(inLen, true);
+    const drumStrs = DRUMS.map(trk => state[trk.name] || '');
+    const bstr = state.Bass || '';
+    const astr = state.Acc || '';
     // legacy single-Mel saves (from before H1-H4 existed) migrate into H1 only
     const hasHarmonyKeys = state.H1 || state.H2 || state.H3 || state.H4;
     const harmonyArrs = [0, 1, 2, 3].map(v => {
@@ -3204,29 +3345,31 @@
       if (v === 0 && !hasHarmonyKeys && state.Mel) return state.Mel.split(',').map(Number);
       return [];
     });
-    for (let s = 0; s < STEPS; s++) {
-      bassPattern[s] = bstr[s] === '.' ? -1 : parseInt(bstr[s], 16);
-      renderBassCell(s);
-      accentPattern[s] = +astr[s] || 0;
-      renderAccCell(s);
+    // clears the whole allocation, not just this pattern's length, so the
+    // tail of a longer pattern can't reappear if this one is grown later
+    for (let s = 0; s < MAX_STEPS; s++) {
+      const live = s < inLen;
+      DRUMS.forEach((trk, ti) => { drumPattern[ti][s] = live && drumStrs[ti][s] === '1'; });
+      bassPattern[s] = live && bstr[s] && bstr[s] !== '.' ? parseInt(bstr[s], 16) : -1;
+      accentPattern[s] = live ? (+astr[s] || 0) : 0;
       for (let v = 0; v < HARMONY_VOICES; v++) {
-        harmonyPatterns[v][s] = Number.isFinite(harmonyArrs[v][s]) ? harmonyArrs[v][s] : -1;
-        renderHarmonyCell(v, s);
+        harmonyPatterns[v][s] = live && Number.isFinite(harmonyArrs[v][s]) ? harmonyArrs[v][s] : -1;
       }
     }
+    renderPage();
     if (state.bpm) setBpm(state.bpm);
     if (state.swing !== undefined) setSwing(state.swing);
     if (state.humanize !== undefined) setHumanize(state.humanize);
   }
   function currentState() {
-    const state = { bpm, swing: Math.round(swing * 100), humanize: Math.round(humanize * 100) };
+    const state = { len: patLen, bpm, swing: Math.round(swing * 100), humanize: Math.round(humanize * 100) };
     DRUMS.forEach((trk, ti) => {
-      state[trk.name] = drumPattern[ti].map(v => v ? '1' : '0').join('');
+      state[trk.name] = drumPattern[ti].slice(0, patLen).map(v => v ? '1' : '0').join('');
     });
-    state.Bass = bassPattern.map(v => v < 0 ? '.' : v.toString(16)).join('');
-    state.Acc = accentPattern.map(String).join('');
+    state.Bass = bassPattern.slice(0, patLen).map(v => v < 0 ? '.' : v.toString(16)).join('');
+    state.Acc = accentPattern.slice(0, patLen).map(String).join('');
     for (let v = 0; v < HARMONY_VOICES; v++) {
-      state['H' + (v + 1)] = harmonyPatterns[v].join(',');
+      state['H' + (v + 1)] = harmonyPatterns[v].slice(0, patLen).join(',');
     }
     return state;
   }
@@ -3521,14 +3664,14 @@
     pushUndo('clearing ' + name);
     if (row.classList.contains('harmony')) {
       const v = +row.dataset.voice;
-      for (let s = 0; s < STEPS; s++) { harmonyPatterns[v][s] = -1; renderHarmonyCell(v, s); }
+      for (let s = 0; s < patLen; s++) { harmonyPatterns[v][s] = -1; renderHarmonyCell(v, s); }
     } else if (row.classList.contains('bass')) {
-      for (let s = 0; s < STEPS; s++) { bassPattern[s] = -1; renderBassCell(s); }
+      for (let s = 0; s < patLen; s++) { bassPattern[s] = -1; renderBassCell(s); }
     } else if (row.classList.contains('acc')) {
-      for (let s = 0; s < STEPS; s++) { accentPattern[s] = 0; renderAccCell(s); }
+      for (let s = 0; s < patLen; s++) { accentPattern[s] = 0; renderAccCell(s); }
     } else {
       const ti = +row.dataset.drum;
-      for (let s = 0; s < STEPS; s++) { drumPattern[ti][s] = false; drumCells[ti][s].classList.remove('on'); }
+      for (let s = 0; s < patLen; s++) { drumPattern[ti][s] = false; renderDrumCell(ti, s); }
     }
     toast(name + ' cleared — UNDO brings it back');
   }
@@ -3541,14 +3684,14 @@
   function mutatePattern() {
     DRUMS.forEach((trk, ti) => {
       const prob = MUTATE_PROB[trk.name] ?? 0.08;
-      for (let s = 0; s < STEPS; s++) {
+      for (let s = 0; s < patLen; s++) {
         if (Math.random() < prob) {
           drumPattern[ti][s] = !drumPattern[ti][s];
-          drumCells[ti][s].classList.toggle('on', drumPattern[ti][s]);
+          renderDrumCell(ti, s);
         }
       }
     });
-    for (let s = 0; s < STEPS; s++) {
+    for (let s = 0; s < patLen; s++) {
       if (Math.random() < 0.08) {
         accentPattern[s] = (accentPattern[s] + 1) % 3;
         renderAccCell(s);
@@ -3571,7 +3714,7 @@
   function buildFillOverride() {
     return DRUMS.map((trk, ti) => {
       const prob = FILL_PROB[trk.name] ?? 0.25;
-      return drumPattern[ti].map((v, s) => (s >= 12 && Math.random() < prob) ? true : v);
+      return drumPattern[ti].map((v, s) => (s % STEPS_PER_PAGE >= 12 && Math.random() < prob) ? true : v);
     });
   }
   const fillBtn = document.getElementById('fillBtn');
@@ -4016,7 +4159,7 @@
 
   function oneBarDur() {
     let d = 0;
-    for (let step = 0; step < STEPS; step++) {
+    for (let step = 0; step < STEPS_PER_PAGE; step++) {
       let s = stepDur();
       s *= step % 2 === 0 ? (1 + swing) : (1 - swing);
       d += s;
@@ -4088,11 +4231,14 @@
     const prevLabel = exportWavBtn.textContent;
     exportWavBtn.textContent = '…RENDERING';
     try {
-      // lay out every step's trigger time up front, honoring swing
+      // lay out every step's trigger time up front, honoring swing. The
+      // pattern repeats until it covers at least WAV_EXPORT_BARS, so a 1-bar
+      // pattern still exports 4 bars and a 4-bar one exports once through.
+      const reps = Math.max(1, Math.ceil(WAV_EXPORT_BARS / pageCount()));
       const stepEvents = [];
       let dur = 0;
-      for (let bar = 0; bar < WAV_EXPORT_BARS; bar++) {
-        for (let step = 0; step < STEPS; step++) {
+      for (let rep = 0; rep < reps; rep++) {
+        for (let step = 0; step < patLen; step++) {
           stepEvents.push({ step, time: dur });
           let d = stepDur();
           d *= step % 2 === 0 ? (1 + swing) : (1 - swing);
@@ -4121,7 +4267,11 @@
     if (songChain.length === 0) { toast('Build a chain first'); return; }
     const populated = populatedChain(); // was: songChain.filter(k => slots[k]) — identical, now shared
     if (populated.length === 0) { toast('Nothing saved in this chain yet'); return; }
-    if (populated.length > SONG_EXPORT_MAX_BARS) { toast('Chain too long to export (max ' + SONG_EXPORT_MAX_BARS + ' bars)'); return; }
+    // a link is one pass of its pattern, which is 1, 2 or 4 bars — so the
+    // cap counts bars rather than links
+    const lenOfState = st => clampPatLen(((st && st.len) || ((st && st[DRUMS[0].name]) || '').length) || STEPS_PER_PAGE);
+    const totalBars = populated.reduce((n, key) => n + lenOfState(slots[key]) / STEPS_PER_PAGE, 0);
+    if (totalBars > SONG_EXPORT_MAX_BARS) { toast('Chain too long to export (max ' + SONG_EXPORT_MAX_BARS + ' bars)'); return; }
 
     exportSongWavBtn.disabled = true;
     exporting = true;
@@ -4129,17 +4279,15 @@
     exportSongWavBtn.textContent = '…RENDERING';
     const savedPattern = currentState();
     try {
-      const bar = oneBarDur(); // bpm/swing are constant across the whole
-                                // chain by design, so total duration needs
-                                // no pattern application to compute
-      const totalDur = bar * populated.length;
+      const totalDur = oneBarDur() * totalBars; // bpm/swing are constant across
+                                                 // the whole chain by design
 
       const exportVaryCache = { key: null, pattern: null }; // never shares state with live playback
       const triggerAll = () => {
         let t = 0;
         populated.forEach((key, i) => {
-          applyPatternOnly(patternForChainPos(populated, i, exportVaryCache));
-          for (let step = 0; step < STEPS; step++) {
+          applyPatternOnly(patternForChainPos(populated, i, exportVaryCache)); // also sets patLen for this link
+          for (let step = 0; step < patLen; step++) {
             triggerStep(step, t);
             let d = stepDur();
             d *= step % 2 === 0 ? (1 + swing) : (1 - swing);
