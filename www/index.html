@@ -514,13 +514,14 @@
     opacity: 0.7;
   }
   .chip.on { background: var(--accent); color: #fff; opacity: 1; }
-  .voice-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
+  .voice-chips { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 8px; }
   .chord-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
-  .track.harmony .tname { cursor: pointer; }
-  .track.harmony.armed .tname { color: var(--accent); font-weight: 700; }
-  /* REC armed on this one voice — the row's own name doubles as its
+  /* the rows you can record onto — tapping the name arms that track */
+  .track.harmony .tname, .track.bass .tname { cursor: pointer; }
+  .track.armed .tname { color: var(--accent); font-weight: 700; }
+  /* REC armed on this one track — the row's own name doubles as its
      record light, in the same red as the REC buttons */
-  .track.harmony.rec-armed .tname { color: #D8322F; animation: pulse 0.7s infinite alternate; }
+  .track.rec-armed .tname { color: #D8322F; animation: pulse 0.7s infinite alternate; }
   /* brief "a note just landed here" wash — only used in AUTO record mode,
      where the target voice isn't fixed like the manual .armed highlight */
   .track.harmony { position: relative; }
@@ -778,6 +779,7 @@
       <button class="chip" data-voice="1">H2</button>
       <button class="chip" data-voice="2">H3</button>
       <button class="chip" data-voice="3">H4</button>
+      <button class="chip" data-voice="bass">BASS</button>
     </div>
 
     <div class="chord-chips" id="chordChips">
@@ -814,7 +816,7 @@
       </div>
     </div>
 
-    <div class="row-label">Pattern · tap drums to toggle · tap bass to cycle notes<span class="mobile-only"> · tap H1-H4 names to arm recording</span></div>
+    <div class="row-label">Pattern · tap drums to toggle · tap bass to cycle notes<span class="mobile-only"> · tap H1-H4/Bass names to record</span></div>
     <div class="grid" id="grid"></div>
 
     <div class="io-row">
@@ -938,8 +940,11 @@
   letter marks where it starts, unlabeled steps in the same color are it sustaining. Tap
   a note to erase it, tap a sustained step to trim from there on, or drag from a note
   across empty steps to extend how long it rings ·
-  tap a row's <b>H1-H4</b> name to arm recording straight onto that voice — the name turns
-  red while it's armed, and tapping it again disarms and goes back to AUTO ·
+  tap a row's <b>H1-H4</b> or <b>Bass</b> name to arm recording straight onto that track — the
+  name turns red while it's armed, and tapping it again disarms and goes back to AUTO.
+  Bass holds one note per step and always sounds in its own low octave, so a note you play
+  onto it keeps its letter and drops its octave, and a new note replaces whatever that step
+  held ·
   <b>Acc</b> steps make all drums hit harder ·
   the swing chips (<b>STR8 / 54 / 58 / 62 / 66</b>) jump to classic hardware-sampler swing feels ·
   <b>🎲 MUTATE</b> lightly varies the current drum pattern instead of replacing it ·
@@ -953,8 +958,9 @@
   at once (multi-touch, or a laptop chord) for real harmony — a 5th note is dropped with a
   toast if all four are busy. Turn on <b>SUS</b> first and a note's length follows how long
   you actually hold the key, instead of always snapping to one step.
-  Tapping a row's <b>H1-H4</b> name on the Beats grid does two steps at once: it arms
-  <b>● REC</b> and points it at that one voice, so you can set up a take without leaving Beats.
+  Tapping a row's <b>H1-H4</b> or <b>Bass</b> name on the Beats grid does two steps at once: it
+  arms <b>● REC</b> and points it at that one track, so you can set up a take without leaving
+  Beats. The <b>BASS</b> chip next to AUTO/H1-H4 on the Keys panel selects the same thing.
 
   <h2>Mixer</h2>
   Drag faders for volume · <b>tap</b> a channel name to mute · <b>hold</b> it to solo.
@@ -1718,9 +1724,11 @@
   {
     const row = document.createElement('div');
     row.className = 'track bass';
+    row.dataset.voice = 'bass'; // same record-target id the BASS chip uses
     const lbl = document.createElement('div');
     lbl.className = 'tname';
     lbl.textContent = 'Bass';
+    lbl.title = 'Tap to record onto Bass';
     row.appendChild(lbl);
     for (let s = 0; s < STEPS; s++) {
       const c = document.createElement('div');
@@ -1831,6 +1839,16 @@
       if (d < bestD) { bestD = d; best = st.step; bestTime = st.time; }
     });
     if (best === null) return;
+
+    // bass row: one note per step, and the row is a single octave of note
+    // names played at its own fixed low register — so a played note keeps
+    // its name and drops its octave, and a new note simply replaces
+    // whatever was on that step (no "voice busy" case, no sustain ties)
+    if (recordTargetVoice === 'bass') {
+      bassPattern[best] = midi % 12;
+      renderBassCell(best);
+      return;
+    }
 
     const heldVoices = new Set();
     activeRecordings.forEach(r => heldVoices.add(r.voice));
@@ -2147,50 +2165,53 @@
     toast(sustainMode ? 'Sustain on — hold notes to record their length' : 'Sustain off');
   });
 
-  // which voice recording targets — 'auto' (spread across whichever is
-  // free, today's behavior) or a specific 0-3 voice index, like arming one
-  // track in a multitrack recorder
+  // which track recording targets — 'auto' (spread across whichever
+  // harmony voice is free, today's behavior), a specific 0-3 harmony voice
+  // index, or 'bass', like arming one track in a multitrack recorder
   let recordTargetVoice = 'auto';
   const voiceChips = document.querySelectorAll('.voice-chips .chip');
-  const chipVoice = chip => chip.dataset.voice === 'auto' ? 'auto' : +chip.dataset.voice;
+  // a record target is a harmony voice index 0-3, or the string 'auto' or
+  // 'bass' — spelled the same way in the chips' and the rows' data-voice
+  const voiceOf = el => /^\d+$/.test(el.dataset.voice) ? +el.dataset.voice : el.dataset.voice;
+  const armableRows = [...document.querySelectorAll('.track.harmony, .track.bass')];
   function updateArmedRow() {
-    document.querySelectorAll('.track.harmony').forEach(row => {
-      const targeted = recordTargetVoice !== 'auto' && +row.dataset.voice === recordTargetVoice;
+    armableRows.forEach(row => {
+      const targeted = voiceOf(row) === recordTargetVoice;
       row.classList.toggle('armed', targeted);
       row.classList.toggle('rec-armed', targeted && recArmed);
     });
   }
   function setRecordTargetVoice(voice) {
     recordTargetVoice = voice;
-    voiceChips.forEach(c => c.classList.toggle('on', chipVoice(c) === voice));
+    voiceChips.forEach(c => c.classList.toggle('on', voiceOf(c) === voice));
     updateArmedRow();
   }
   voiceChips.forEach(chip => {
     chip.addEventListener('pointerdown', e => {
       e.preventDefault();
       unlock();
-      setRecordTargetVoice(chipVoice(chip));
+      setRecordTargetVoice(voiceOf(chip));
     });
   });
 
-  // tapping a harmony row's own name arms REC straight onto that voice —
-  // the grid's version of the H1-H4 chips, so a take can be set up without
-  // leaving Beats. Tapping the armed one again disarms it and goes back to
-  // AUTO. On click rather than this app's usual pointerdown: the Grid
-  // subtab scrolls on short phones, and a scroll that happens to start on
-  // a row name must not arm a track.
-  document.querySelectorAll('.track.harmony').forEach(row => {
-    const v = +row.dataset.voice;
-    row.querySelector('.tname').addEventListener('click', () => {
+  // tapping a row's own name (H1-H4 or Bass) arms REC straight onto that
+  // track — the grid's version of the chips, so a take can be set up
+  // without leaving Beats. Tapping the armed one again disarms it and goes
+  // back to AUTO. On click rather than this app's usual pointerdown: the
+  // Grid subtab scrolls on short phones, and a scroll that happens to
+  // start on a row name must not arm a track.
+  armableRows.forEach(row => {
+    const target = voiceOf(row);
+    const lbl = row.querySelector('.tname');
+    lbl.addEventListener('click', () => {
       unlock();
-      const label = 'H' + (v + 1);
-      if (recArmed && recordTargetVoice === v) {
+      if (recArmed && recordTargetVoice === target) {
         setRecordTargetVoice('auto');
-        setRec(false, label + ' disarmed — REC off');
+        setRec(false, lbl.textContent + ' disarmed — REC off');
         return;
       }
-      setRecordTargetVoice(v);
-      setRec(true, label + ' armed — play keys to record onto it');
+      setRecordTargetVoice(target);
+      setRec(true, lbl.textContent + ' armed — play keys to record onto it');
     });
   });
 
