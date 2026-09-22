@@ -296,6 +296,9 @@
   }
   .mode-indicator { display: none; color: var(--accent); font-weight: 700; }
   .mode-indicator.on { display: inline; }
+  /* the jam recorder's "you are rolling" light — on the screen rather than
+     the button, so it's visible from every page, and tappable to stop */
+  .mode-indicator.jam { color: #FF4B47; cursor: pointer; animation: pulse 1.2s infinite alternate; }
   #scope { width: 100%; height: 46px; display: block; }
 
   .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; flex-shrink: 0; }
@@ -656,6 +659,7 @@
       <span id="songIndicator" class="mode-indicator">SONG</span>
       <span id="chordIndicator" class="mode-indicator">CHORD</span>
       <span id="sustainIndicator" class="mode-indicator">SUS</span>
+      <span id="jamIndicator" class="mode-indicator jam" title="Tap to stop the jam recording">● JAM 0:00</span>
       <span id="noteReadout">—</span>
     </div>
     <canvas id="scope"></canvas>
@@ -899,9 +903,10 @@
       <input type="file" id="importFile" accept="application/json" hidden>
     </div>
 
-    <div class="row-label">Audio · renders 4 bars of the current beat as sound</div>
-    <div class="io-row single">
+    <div class="row-label">Audio · render 4 bars, or record a live jam</div>
+    <div class="io-row">
       <button class="io-btn" id="exportWavBtn">⇩ EXPORT WAV</button>
+      <button class="io-btn" id="jamBtn">⏺ RECORD JAM</button>
     </div>
     </div>
 
@@ -973,6 +978,16 @@
   <b>EXPORT</b> / <b>IMPORT</b> save and load your pattern as a small JSON file ·
   <b>EXPORT WAV</b> renders 4 bars of the current beat to a real audio file you can
   share or drop into any music app.
+
+  <h2>Jam recording</h2>
+  <b>⏺ RECORD JAM</b> (next to EXPORT WAV) records everything you hear, as you play it —
+  the beat, your keys, knob moves, fills, slot and song changes — into one WAV, however
+  long you go. It's a live take, not a re-render: what you played is what you get ·
+  a red <b>● JAM</b> clock appears on the screen so you can see it's rolling from any page,
+  and tapping that clock stops and saves ·
+  takes stop on their own at 10 minutes, and leaving the app ends one, because the phone
+  suspends audio in the background · the two EXPORT WAV buttons are unavailable while a
+  take is rolling, and vice versa.
 
   <h2>Laptop</h2>
   <b>A S D F G H J K</b> play white keys · <b>W E T Y U</b> play black keys ·
@@ -3752,16 +3767,7 @@
     e.preventDefault();
     unlock();
     const payload = { app: 'ps1-pocket-synth', version: 1, groove: currentState() };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-    a.href = url;
-    a.download = `ps1-groove-${stamp}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), 'ps1-groove', 'json');
     toast('Groove exported');
   });
 
@@ -3812,16 +3818,7 @@
         chainOrder: [...songChain],
       },
     };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-    a.href = url;
-    a.download = `ps1-song-${stamp}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), 'ps1-song', 'json');
     toast('Song exported');
   });
 
@@ -3866,14 +3863,15 @@
   });
 
   // ---------------- audio export (WAV) ----------------
-  // encodes a rendered AudioBuffer as 16-bit PCM WAV — no external library needed
-  function audioBufferToWavBlob(buffer) {
-    const numCh = buffer.numberOfChannels;
-    const sr = buffer.sampleRate;
-    const frames = buffer.length;
+  // 16-bit PCM WAV, no external library needed. The 44-byte header is its own
+  // function because two very different producers need it: the offline
+  // exports, which hand over one finished AudioBuffer, and the jam recorder,
+  // which streams in 16-bit chunks while you play and never holds a float
+  // copy of the whole take.
+  function wavHeader(frames, sr, numCh) {
     const blockAlign = numCh * 2;
     const dataSize = frames * blockAlign;
-    const ab = new ArrayBuffer(44 + dataSize);
+    const ab = new ArrayBuffer(44);
     const view = new DataView(ab);
     const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
     writeStr(0, 'RIFF');
@@ -3889,18 +3887,42 @@
     view.setUint16(34, 16, true); // bits per sample
     writeStr(36, 'data');
     view.setUint32(40, dataSize, true);
+    return ab;
+  }
+  function audioBufferToWavBlob(buffer) {
+    const numCh = buffer.numberOfChannels;
+    const frames = buffer.length;
+    const data = new DataView(new ArrayBuffer(frames * numCh * 2));
     const chData = [];
     for (let ch = 0; ch < numCh; ch++) chData.push(buffer.getChannelData(ch));
-    let off = 44;
+    let off = 0;
     for (let i = 0; i < frames; i++) {
       for (let ch = 0; ch < numCh; ch++) {
         let s = Math.max(-1, Math.min(1, chData[ch][i]));
         s = s < 0 ? s * 0x8000 : s * 0x7fff;
-        view.setInt16(off, s, true);
+        data.setInt16(off, s, true);
         off += 2;
       }
     }
-    return new Blob([ab], { type: 'audio/wav' });
+    return new Blob([wavHeader(frames, buffer.sampleRate, numCh), data], { type: 'audio/wav' });
+  }
+  // already-interleaved 16-bit chunks (what the jam recorder collects)
+  function pcmChunksToWavBlob(chunks, frames, sr, numCh) {
+    return new Blob([wavHeader(frames, sr, numCh), ...chunks], { type: 'audio/wav' });
+  }
+
+  // every export ends the same way: hand the browser a blob under a
+  // timestamped name
+  function downloadBlob(blob, prefix, ext) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    a.href = url;
+    a.download = `${prefix}-${stamp}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   const WAV_EXPORT_BARS = 4;
@@ -3969,19 +3991,11 @@
       Object.assign(chanNodes, saved.chanNodes);
     }
 
-    const blob = audioBufferToWavBlob(rendered);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-    a.href = url;
-    a.download = `${filenamePrefix}-${stamp}.wav`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadBlob(audioBufferToWavBlob(rendered), filenamePrefix, 'wav');
   }
 
   async function exportWav() {
+    if (jamRecording) { toast('Stop the jam recording first'); return; }
     if (exporting || exportWavBtn.disabled) return;
     exportWavBtn.disabled = true;
     exporting = true; // must be set before this synchronous run yields, so
@@ -4018,6 +4032,7 @@
   });
 
   async function exportSongWav() {
+    if (jamRecording) { toast('Stop the jam recording first'); return; }
     if (exporting || exportSongWavBtn.disabled) return;
     if (songChain.length === 0) { toast('Build a chain first'); return; }
     const populated = populatedChain(); // was: songChain.filter(k => slots[k]) — identical, now shared
@@ -4064,6 +4079,187 @@
   exportSongWavBtn.addEventListener('pointerdown', e => {
     e.preventDefault();
     exportSongWav();
+  });
+
+  // ---------------- live jam recorder ----------------
+  // Records the finished master — the beat, your live playing, knob moves,
+  // fills, slot switches, all of it — for as long as you play, unlike the two
+  // exports above, which re-render programmed material offline. Taps
+  // `analyser` (post-limiter, pre-destination — see buildAudioGraph) through
+  // an AudioWorklet, so the capture runs on the audio thread and no amount of
+  // UI work can glitch it. Samples convert to 16-bit as they arrive: half the
+  // memory of float, and exactly what the WAV wants anyway.
+  const JAM_MAX_MIN = 10;   // ~106MB of PCM at 44.1k stereo — a phone tab is at risk past this
+  const JAM_WARN_SEC = 60;  // heads-up this long before the cap
+  const JAM_CHUNK = 4096;   // frames per message to the main thread
+  const JAM_WORKLET_SRC = `
+    class JamTap extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.l = new Float32Array(${JAM_CHUNK});
+        this.r = new Float32Array(${JAM_CHUNK});
+        this.n = 0;
+        this.port.onmessage = () => this.flush(); // stop asks for the last partial chunk
+      }
+      flush() {
+        if (!this.n) return;
+        this.port.postMessage([this.l.slice(0, this.n), this.r.slice(0, this.n)]);
+        this.n = 0;
+      }
+      process(inputs) {
+        const input = inputs[0];
+        if (input && input.length) {
+          const l = input[0], r = input[1] || input[0];
+          for (let i = 0; i < l.length; i++) {
+            this.l[this.n] = l[i];
+            this.r[this.n] = r[i];
+            if (++this.n === ${JAM_CHUNK}) this.flush();
+          }
+        }
+        return true;
+      }
+    }
+    registerProcessor('jam-tap', JamTap);
+  `;
+
+  const jamBtn = document.getElementById('jamBtn');
+  const jamIndicator = document.getElementById('jamIndicator');
+  let jamRecording = false;
+  let jamNode = null;      // AudioWorkletNode, or ScriptProcessorNode on older iOS
+  let jamSink = null;      // silent sink — a node only runs while it reaches the destination
+  let jamChunks = [];      // one interleaved Int16Array per message
+  let jamFrames = 0;
+  let jamStart = 0;
+  let jamTimer = null;
+  let jamWarned = false;
+  let jamModuleCtx = null; // which ctx already has the worklet module registered
+
+  function clockStr(sec) {
+    const s = Math.max(0, Math.floor(sec));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+  function jamElapsed() { return jamRecording && ctx ? ctx.currentTime - jamStart : 0; }
+
+  function updateJamUI() {
+    const t = clockStr(jamElapsed());
+    jamBtn.textContent = jamRecording ? '⏹ STOP · ' + t : '⏺ RECORD JAM';
+    jamBtn.classList.toggle('rec-armed', jamRecording);
+    jamIndicator.textContent = '● JAM ' + t;
+    jamIndicator.classList.toggle('on', jamRecording);
+    // renderOffline swaps the whole audio graph out, which would strand the
+    // tap mid-take — so the two are never available at the same time
+    exportWavBtn.disabled = jamRecording || exporting;
+    exportSongWavBtn.disabled = jamRecording || exporting;
+  }
+
+  function jamPush(l, r) {
+    const n = l.length;
+    const out = new Int16Array(n * 2);
+    for (let i = 0, j = 0; i < n; i++) {
+      let s = Math.max(-1, Math.min(1, l[i]));
+      out[j++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      s = Math.max(-1, Math.min(1, r[i]));
+      out[j++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    jamChunks.push(out);
+    jamFrames += n;
+  }
+
+  async function makeJamTap() {
+    if (ctx.audioWorklet) {
+      if (jamModuleCtx !== ctx) {
+        const url = URL.createObjectURL(new Blob([JAM_WORKLET_SRC], { type: 'text/javascript' }));
+        try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+        jamModuleCtx = ctx;
+      }
+      const node = new AudioWorkletNode(ctx, 'jam-tap', {
+        numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+        channelCount: 2, channelCountMode: 'explicit',
+      });
+      // keyed on jamNode, not jamRecording: stop clears the flag first, then
+      // asks the worklet for its last chunk, and that chunk must still land
+      node.port.onmessage = e => { if (jamNode) jamPush(e.data[0], e.data[1]); };
+      return node;
+    }
+    const node = ctx.createScriptProcessor(JAM_CHUNK, 2, 2); // older iOS
+    node.onaudioprocess = e => {
+      if (!jamNode) return;
+      jamPush(e.inputBuffer.getChannelData(0), e.inputBuffer.getChannelData(1));
+    };
+    return node;
+  }
+
+  async function startJam() {
+    if (jamRecording || jamNode) return; // jamNode outlives the flag while a take is being saved
+    if (exporting) { toast('Wait for the export to finish'); return; }
+    unlock();
+    if (!ctx) { toast('Tap the screen once to start audio, then record'); return; }
+    let node;
+    try {
+      node = await makeJamTap();
+    } catch (err) {
+      console.error('jam recorder failed to start:', err);
+      toast('Could not start the jam recorder');
+      return;
+    }
+    jamNode = node;
+    jamSink = ctx.createGain();
+    jamSink.gain.value = 0;
+    jamSink.connect(ctx.destination);
+    jamNode.connect(jamSink);
+    analyser.connect(jamNode);
+    jamChunks = [];
+    jamFrames = 0;
+    jamWarned = false;
+    jamStart = ctx.currentTime;
+    jamRecording = true;
+    jamTimer = setInterval(() => {
+      const el = jamElapsed();
+      if (el >= JAM_MAX_MIN * 60) { toast('Jam hit the ' + JAM_MAX_MIN + '-minute limit'); stopJam(); return; }
+      if (!jamWarned && el >= JAM_MAX_MIN * 60 - JAM_WARN_SEC) {
+        jamWarned = true;
+        toast('Jam recording stops in a minute');
+      }
+      updateJamUI();
+    }, 500);
+    updateJamUI();
+    toast('Recording — everything you hear is going down');
+  }
+
+  async function stopJam() {
+    if (!jamRecording) return;
+    const sr = ctx.sampleRate;
+    jamRecording = false;
+    clearInterval(jamTimer);
+    if (jamNode.port) {
+      jamNode.port.postMessage('flush'); // the worklet still holds up to one chunk
+      await new Promise(r => setTimeout(r, 60));
+      jamNode.port.onmessage = null;
+    } else {
+      jamNode.onaudioprocess = null;
+    }
+    try { analyser.disconnect(jamNode); } catch (err) { /* already torn down */ }
+    try { jamNode.disconnect(); } catch (err) { /* already gone */ }
+    try { jamSink.disconnect(); } catch (err) { /* already gone */ }
+    jamNode = null;
+    jamSink = null;
+    updateJamUI();
+    if (!jamFrames) { jamChunks = []; toast('Nothing recorded'); return; }
+    const blob = pcmChunksToWavBlob(jamChunks, jamFrames, sr, 2);
+    const len = clockStr(jamFrames / sr);
+    jamChunks = []; // the blob owns the audio now — let the PCM go
+    jamFrames = 0;
+    downloadBlob(blob, 'ps1-jam', 'wav');
+    toast('Jam saved — ' + len);
+  }
+
+  jamBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    jamRecording ? stopJam() : startJam();
+  });
+  jamIndicator.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    stopJam();
   });
 
   // ---------------- desktop layout: DOM reparenting ----------------
