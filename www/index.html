@@ -544,10 +544,14 @@
   @keyframes rowFlash { from { opacity: 0.32; } to { opacity: 0; } }
 
   .chain-preview {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
     font-family: 'Space Grotesk', sans-serif; font-size: 15px;
     letter-spacing: 0.06em; color: var(--accent); margin: 10px 0 18px;
     min-height: 1.4em;
   }
+  .chain-run { padding: 6px 10px; opacity: 1; }
+  .chain-run.playing { background: var(--accent); color: #fff; }
+  .chain-run.empty { opacity: 0.4; text-decoration: line-through; } /* nothing saved in that slot */
   .chain-add-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
 
   .groove-row {
@@ -1011,7 +1015,18 @@
 
   <h2>Slots</h2>
   Tap <b>SAVE</b>, then a slot letter to store your pattern · tap a filled slot to load it —
-  switching slots while playing is live arranging.
+  switching slots while playing is live arranging ·
+  a slot keeps the <b>sound</b> it was saved with, not just the notes: its oscillator and every
+  knob. So a chorus can be brighter than its verse, and loading a slot brings that sound back
+  with it. Slots saved before this simply leave your current sound alone.
+
+  <h2>Song chain</h2>
+  <b>🔗 CHAIN</b> builds the running order from your slots. Passes of the same slot group into
+  one link, so four passes of A read as <b>A ×4</b> rather than four separate As · tap a link for
+  one more pass of it, hold a link to remove it · a link with a line through it is a slot with
+  nothing saved in it yet, and it's skipped · <b>▶ SONG</b> plays the chain, lighting the link
+  that's playing while the screen counts how far through you are. Each link plays its pattern
+  all the way through, so a 4-bar section lasts 4 bars.
 
   <h2>File</h2>
   <b>EXPORT</b> / <b>IMPORT</b> save and load your pattern as a small JSON file ·
@@ -3403,6 +3418,9 @@
     for (let v = 0; v < HARMONY_VOICES; v++) {
       state['H' + (v + 1)] = harmonyPatterns[v].slice(0, patLen).join(',');
     }
+    // the sound this pattern was saved with, so a song can change character
+    // from section to section rather than running one patch throughout
+    state.patch = { wave: currentWave, knobs: Object.fromEntries(Object.keys(params).map(n => [n, params[n].v])) };
     const anySoft = arr => arr.slice(0, patLen).some(v => v < 1);
     const velStr = arr => arr.slice(0, patLen).map(v => Math.round(v * 15).toString(16)).join('');
     if (anySoft(bassVel)) state.Bassv = velStr(bassVel);
@@ -3415,6 +3433,22 @@
   // every knob bank. Every piece here is an already-shipped function —
   // this is pure orchestration, no new audio-graph nodes, so it needs no
   // changes to exportWav's save/restore list.
+  // Applies a saved patch. Separate from applyState because the two have
+  // different lifetimes: a pattern swap is instant, while a patch change in
+  // the offline song render has to be scheduled for that section's moment.
+  function applyPatch(patch, at) {
+    if (!patch) return; // saves from before per-slot sound: leave it alone
+    if (patch.wave) selectWave(document.querySelector(`.wave-btn[data-wave="${patch.wave}"]`));
+    if (patch.knobs) {
+      Object.keys(patch.knobs).forEach(n => {
+        if (params[n] === undefined) return;
+        params[n].v = patch.knobs[n];
+        applyParam(n, at);
+      });
+      renderAllSlots();
+    }
+  }
+
   function applyGroove(g) {
     pushUndo('loading that groove');
     applyState(g.pattern);
@@ -3672,12 +3706,7 @@
     undoBtn.disabled = undoStack.length === 0;
   }
   function pushUndo(label) {
-    undoStack.push({
-      label,
-      state: currentState(),
-      wave: currentWave,
-      knobs: Object.fromEntries(Object.keys(params).map(n => [n, params[n].v])),
-    });
+    undoStack.push({ label, state: currentState() }); // currentState includes the patch
     if (undoStack.length > UNDO_DEPTH) undoStack.shift();
     updateUndoBtn();
   }
@@ -3686,9 +3715,7 @@
     updateUndoBtn();
     if (!s) { toast('Nothing to undo'); return; }
     applyState(s.state);
-    selectWave(document.querySelector(`.wave-btn[data-wave="${s.wave}"]`));
-    Object.keys(s.knobs).forEach(n => { params[n].v = s.knobs[n]; applyParam(n); });
-    renderAllSlots(); // the four on-screen knob dials
+    applyPatch(s.state.patch); // currentState carries the patch, so this is the whole sound
     toast('Undid ' + s.label);
   }
   undoBtn.addEventListener('pointerdown', e => {
@@ -3853,6 +3880,7 @@
       } else if (slots[key]) {
         pushUndo('loading slot ' + key);
         applyState(slots[key]);
+        applyPatch(slots[key].patch);
         if (!playing) startSeq();
         toast('Loaded slot ' + key);
       } else {
@@ -3895,8 +3923,52 @@
 
   const chainOverlay = document.getElementById('chainOverlay');
   const chainPreview = document.getElementById('chainPreview');
+  // Consecutive passes of the same slot are one link with a count: "A ×4"
+  // reads as a section, where "A · A · A · A" reads as noise. The chain
+  // itself stays a flat list of letters, so saved songs load unchanged.
+  function chainRuns() {
+    const runs = [];
+    songChain.forEach((letter, i) => {
+      const last = runs[runs.length - 1];
+      if (last && last.letter === letter) { last.count++; last.end = i; }
+      else runs.push({ letter, count: 1, start: i, end: i });
+    });
+    return runs;
+  }
   function renderChainPreview() {
-    chainPreview.textContent = songChain.length ? songChain.join(' · ') : '(empty)';
+    chainPreview.textContent = '';
+    const runs = chainRuns();
+    if (!runs.length) { chainPreview.textContent = '(empty)'; return; }
+    runs.forEach(run => {
+      const chip = document.createElement('button');
+      chip.className = 'chip chain-run';
+      chip.textContent = run.count > 1 ? run.letter + ' ×' + run.count : run.letter;
+      chip.title = 'Tap for one more pass of ' + run.letter + ', hold to remove';
+      if (!slots[run.letter]) chip.classList.add('empty'); // nothing saved in that slot yet
+      if (songMode && songPos >= run.start && songPos <= run.end) chip.classList.add('playing');
+      let holdT = null, held = false;
+      chip.addEventListener('pointerdown', e => {
+        e.stopPropagation(); // the overlay closes on a tap anywhere else
+        held = false;
+        holdT = setTimeout(() => {
+          held = true;
+          songChain.splice(run.start, run.count);
+          renderChainPreview();
+          persistSong();
+          toast(run.letter + ' removed from the chain');
+        }, 500);
+      });
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
+        chip.addEventListener(ev, () => clearTimeout(holdT)));
+      chip.addEventListener('click', e => {
+        e.stopPropagation();
+        if (held) { held = false; return; } // the hold already removed it
+        songChain.splice(run.end + 1, 0, run.letter);
+        renderChainPreview();
+        persistSong();
+      });
+      chainPreview.appendChild(chip);
+    });
   }
   document.getElementById('chainBtn').addEventListener('pointerdown', e => {
     e.preventDefault();
@@ -3983,6 +4055,12 @@
 
   const songBtn = document.getElementById('songBtn');
   const songIndicator = document.getElementById('songIndicator');
+  function updateSongIndicator() {
+    const n = populatedChain().length;
+    songIndicator.textContent = songMode && n
+      ? 'SONG ' + (populatedIndexOf(songPos) + 1) + '/' + n
+      : 'SONG';
+  }
   // finds the first populated slot at or after fromPos, wrapping at most
   // once through the whole chain — undefined if nothing in it is saved
   function firstPopulatedFrom(fromPos) {
@@ -4001,16 +4079,22 @@
       if (pos === undefined) { toast('Nothing saved in this chain yet'); return; }
       songPos = pos;
       liveVaryCache.key = liveVaryCache.pattern = null;
-      applyPatternOnly(patternForChainPos(populatedChain(), populatedIndexOf(songPos), liveVaryCache));
+      const first = patternForChainPos(populatedChain(), populatedIndexOf(songPos), liveVaryCache);
+      applyPatternOnly(first);
+      applyPatch(first.patch);
       songMode = true;
       songBtn.classList.add('on');
       songIndicator.classList.add('on');
+      updateSongIndicator();
+      renderChainPreview(); // mark where playback is starting from
       if (!playing) startSeq();
       toast('Song mode on');
     } else {
       songMode = false;
       songBtn.classList.remove('on');
       songIndicator.classList.remove('on');
+      updateSongIndicator(); // back to a plain SONG for next time
+      renderChainPreview(); // drop the "you are here" marker
       toast('Song mode off');
     }
   });
@@ -4019,7 +4103,11 @@
     const pos = firstPopulatedFrom((songPos + 1) % songChain.length);
     if (pos === undefined) return; // nothing saved anywhere in the chain — leave current pattern alone
     songPos = pos;
-    applyPatternOnly(patternForChainPos(populatedChain(), populatedIndexOf(songPos), liveVaryCache));
+    const next = patternForChainPos(populatedChain(), populatedIndexOf(songPos), liveVaryCache);
+    applyPatternOnly(next);
+    applyPatch(next.patch);
+    updateSongIndicator();
+    renderChainPreview(); // move the "you are here" marker
   }
 
   // ---------------- export / import ----------------
@@ -4050,6 +4138,7 @@
         const groove = parsed && parsed.groove ? parsed.groove : parsed; // accept raw state too
         pushUndo('the import');
         applyState(groove);
+        applyPatch(groove.patch); // files written before per-slot sound have none
         toast('Groove imported');
       } catch (err) {
         toast('Could not read that file');
@@ -4324,7 +4413,9 @@
       const triggerAll = () => {
         let t = 0;
         populated.forEach((key, i) => {
-          applyPatternOnly(patternForChainPos(populated, i, exportVaryCache)); // also sets patLen for this link
+          const linkState = patternForChainPos(populated, i, exportVaryCache);
+          applyPatternOnly(linkState); // also sets patLen for this link
+          applyPatch(linkState.patch, t); // ...and its sound, scheduled for when the link starts
           for (let step = 0; step < patLen; step++) {
             triggerStep(step, t);
             let d = stepDur();
@@ -5236,23 +5327,28 @@
     drivePre.gain.value = 1 + p * 9;
     drivePost.gain.value = 1 / (1 + p * 2.2);
   }
-  function applyParam(name) {
+  // `at` is when the change should land. It defaults to now, which is every
+  // live case; the offline song render passes each section's start time,
+  // because there the whole song is scheduled against one context before a
+  // single sample is produced.
+  function applyParam(name, at) {
     if (!ctx) return;
+    const t = at === undefined ? ctx.currentTime : at;
     const p = params[name].v;
-    if (name === 'cutoff') filter.frequency.setTargetAtTime(cutoffHz(p), ctx.currentTime, 0.02);
-    if (name === 'delay')  delayWet.gain.setTargetAtTime(p * 0.9, ctx.currentTime, 0.02);
-    if (name === 'reverb') reverbWet.gain.setTargetAtTime(p * 1.2, ctx.currentTime, 0.02);
+    if (name === 'cutoff') filter.frequency.setTargetAtTime(cutoffHz(p), t, 0.02);
+    if (name === 'delay')  delayWet.gain.setTargetAtTime(p * 0.9, t, 0.02);
+    if (name === 'reverb') reverbWet.gain.setTargetAtTime(p * 1.2, t, 0.02);
     if (name === 'drive')  setDrive(p);
-    if (name === 'lfoRate')  lfo.frequency.setTargetAtTime(lfoHz(p), ctx.currentTime, 0.02);
-    if (name === 'lfoDepth') lfoGain.gain.setTargetAtTime(p * 60, ctx.currentTime, 0.02);
-    if (name === 'crackle') crackleGain.gain.setTargetAtTime(p * 0.12, ctx.currentTime, 0.05);
+    if (name === 'lfoRate')  lfo.frequency.setTargetAtTime(lfoHz(p), t, 0.02);
+    if (name === 'lfoDepth') lfoGain.gain.setTargetAtTime(p * 60, t, 0.02);
+    if (name === 'crackle') crackleGain.gain.setTargetAtTime(p * 0.12, t, 0.05);
     if (name === 'wow') {
-      wowLfoGain.gain.setTargetAtTime(p * 0.0025, ctx.currentTime, 0.05);
-      flutterLfoGain.gain.setTargetAtTime(p * 0.0006, ctx.currentTime, 0.05);
+      wowLfoGain.gain.setTargetAtTime(p * 0.0025, t, 0.05);
+      flutterLfoGain.gain.setTargetAtTime(p * 0.0006, t, 0.05);
     }
     if (name === 'crush') {
-      crushDry.gain.setTargetAtTime(1 - p * 0.8, ctx.currentTime, 0.05);
-      crushWet.gain.setTargetAtTime(p * 0.9, ctx.currentTime, 0.05);
+      crushDry.gain.setTargetAtTime(1 - p * 0.8, t, 0.05);
+      crushWet.gain.setTargetAtTime(p * 0.9, t, 0.05);
     }
     // attack / decay / sustain / release / detune / glide / duck are read at note time
   }
