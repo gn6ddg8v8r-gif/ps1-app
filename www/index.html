@@ -145,6 +145,9 @@
     pointer-events: none; z-index: 60; white-space: nowrap;
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  /* a toast you can act on — used when a finished file needs one more tap,
+     because the share sheet only opens from a fresh one */
+  .toast.tappable { pointer-events: auto; background: var(--accent); cursor: pointer; }
   .mini-transport { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 8px; }
   .mini-btn {
     font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14px;
@@ -1033,6 +1036,18 @@
   <b>EXPORT WAV</b> renders 4 bars of the current beat to a real audio file you can
   share or drop into any music app.
 
+  <h2>Where files go</h2>
+  In a browser tab, everything you export downloads the normal way — your Downloads folder
+  on a computer, or Files → Downloads on an iPhone ·
+  from the app on your home screen, where iOS gives a web app no download manager, saving
+  opens the <b>share sheet</b> instead: Save to Files, AirDrop it to a Mac, message it, or
+  send it straight into GarageBand · if a render or a long jam takes so long that the tap
+  that started it has expired, the file waits on a <b>tap here to save</b> message rather
+  than being lost ·
+  the audio is an ordinary <b>WAV</b> (16-bit stereo), which plays in anything and imports
+  into any music app — no converting needed. It costs about 11 MB a minute, so a five-minute
+  jam is around 58 MB.
+
   <h2>Jam recording</h2>
   <b>⏺ RECORD JAM</b> (next to EXPORT WAV) records everything you hear, as you play it —
   the beat, your keys, knob moves, fills, slot and song changes — into one WAV, however
@@ -1461,11 +1476,15 @@
   // ---------------- toast + help ----------------
   const toastEl = document.getElementById('toast');
   let toastT = null;
-  function toast(msg, duration = 1500) {
+  function toast(msg, duration = 1500, tappable = false) {
     toastEl.textContent = msg;
     toastEl.classList.add('show');
+    toastEl.classList.toggle('tappable', tappable);
     clearTimeout(toastT);
-    toastT = setTimeout(() => toastEl.classList.remove('show'), duration);
+    toastT = setTimeout(() => {
+      toastEl.classList.remove('show');
+      toastEl.classList.remove('tappable');
+    }, duration);
   }
   const helpOverlay = document.getElementById('helpOverlay');
   document.getElementById('helpBtn').addEventListener('pointerdown', e => {
@@ -4119,7 +4138,7 @@
     e.preventDefault();
     unlock();
     const payload = { app: 'ps1-pocket-synth', version: 1, groove: currentState() };
-    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), 'ps1-groove', 'json');
+    saveBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), 'ps1-groove', 'json');
     toast('Groove exported');
   });
 
@@ -4172,7 +4191,7 @@
         chainOrder: [...songChain],
       },
     };
-    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), 'ps1-song', 'json');
+    saveBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), 'ps1-song', 'json');
     toast('Song exported');
   });
 
@@ -4265,18 +4284,62 @@
     return new Blob([wavHeader(frames, sr, numCh), ...chunks], { type: 'audio/wav' });
   }
 
-  // every export ends the same way: hand the browser a blob under a
-  // timestamped name
-  function downloadBlob(blob, prefix, ext) {
+  // Getting a file out of the app. A browser tab downloads it, which is what
+  // every export did and still does. An app launched from the home screen has
+  // no download manager, though — on iOS the link quietly does nothing there,
+  // which made a recorded jam a dead end — so that case hands the file to the
+  // system share sheet instead: Save to Files, AirDrop, Messages, straight
+  // into GarageBand.
+  const fileStamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  const runningStandalone = () =>
+    window.navigator.standalone === true ||            // iOS, added to the home screen
+    !!window.Capacitor ||                              // the native wrapper
+    (!!window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+
+  function downloadBlob(blob, name) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
     a.href = url;
-    a.download = `${prefix}-${stamp}.${ext}`;
+    a.download = name;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  }
+  function shareableFile(blob, name) {
+    if (typeof File !== 'function' || !navigator.canShare) return null;
+    const file = new File([blob], name, { type: blob.type });
+    return navigator.canShare({ files: [file] }) ? file : null;
+  }
+
+  // A file that's ready but has no fresh tap to ride on: the share sheet only
+  // opens from one, and an offline render (or a jam hitting its time limit)
+  // can easily outlast the tap that started it. Rather than lose the file, it
+  // waits on a tappable toast.
+  let pendingSave = null;
+  function offerSave(blob, name) {
+    pendingSave = { blob, name };
+    toast('Ready — tap here to save', 12000, true);
+  }
+  toastEl.addEventListener('pointerdown', () => {
+    if (!pendingSave) return;
+    const { blob, name } = pendingSave;
+    pendingSave = null;
+    toastEl.classList.remove('show', 'tappable');
+    saveBlob(blob, name); // a tap on the toast is the fresh gesture share needs
+  });
+
+  // name is either a full filename, or a prefix + extension to stamp
+  async function saveBlob(blob, prefixOrName, ext) {
+    const name = ext ? `${prefixOrName}-${fileStamp()}.${ext}` : prefixOrName;
+    const file = runningStandalone() ? shareableFile(blob, name) : null;
+    if (!file) { downloadBlob(blob, name); return; }
+    try {
+      await navigator.share({ files: [file], title: name });
+    } catch (err) {
+      if (err && err.name === 'AbortError') return; // dismissed on purpose
+      offerSave(blob, name); // most likely the tap went stale during a render
+    }
   }
 
   const WAV_EXPORT_BARS = 4;
@@ -4345,7 +4408,7 @@
       Object.assign(chanNodes, saved.chanNodes);
     }
 
-    downloadBlob(audioBufferToWavBlob(rendered), filenamePrefix, 'wav');
+    await saveBlob(audioBufferToWavBlob(rendered), filenamePrefix, 'wav');
   }
 
   async function exportWav() {
@@ -4610,7 +4673,7 @@
     const len = clockStr(jamFrames / sr);
     jamChunks = []; // the blob owns the audio now — let the PCM go
     jamFrames = 0;
-    downloadBlob(blob, 'ps1-jam', 'wav');
+    await saveBlob(blob, 'ps1-jam', 'wav');
     toast('Jam saved — ' + len);
   }
 
