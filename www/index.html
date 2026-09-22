@@ -199,6 +199,10 @@
     .plate { grid-area: plate; }
     .screen { grid-area: screen; }
     .tabs { display: none !important; }
+    /* hint text that would wrap this column's row-label onto a second line
+       and reopen the page scroll this layout is tuned to avoid — desktop
+       has the hover tooltip and Help for the same thing */
+    .mobile-only { display: none !important; }
     .panel { display: flex !important; }
     .subtabs { display: none !important; }
     .groove-sheet, .groove-sheet-scrim { display: none !important; }
@@ -512,7 +516,11 @@
   .chip.on { background: var(--accent); color: #fff; opacity: 1; }
   .voice-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
   .chord-chips { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
+  .track.harmony .tname { cursor: pointer; }
   .track.harmony.armed .tname { color: var(--accent); font-weight: 700; }
+  /* REC armed on this one voice — the row's own name doubles as its
+     record light, in the same red as the REC buttons */
+  .track.harmony.rec-armed .tname { color: #D8322F; animation: pulse 0.7s infinite alternate; }
   /* brief "a note just landed here" wash — only used in AUTO record mode,
      where the target voice isn't fixed like the manual .armed highlight */
   .track.harmony { position: relative; }
@@ -806,7 +814,7 @@
       </div>
     </div>
 
-    <div class="row-label">Pattern · tap drums to toggle · tap bass to cycle notes</div>
+    <div class="row-label">Pattern · tap drums to toggle · tap bass to cycle notes<span class="mobile-only"> · tap H1-H4 names to arm recording</span></div>
     <div class="grid" id="grid"></div>
 
     <div class="io-row">
@@ -930,6 +938,8 @@
   letter marks where it starts, unlabeled steps in the same color are it sustaining. Tap
   a note to erase it, tap a sustained step to trim from there on, or drag from a note
   across empty steps to extend how long it rings ·
+  tap a row's <b>H1-H4</b> name to arm recording straight onto that voice — the name turns
+  red while it's armed, and tapping it again disarms and goes back to AUTO ·
   <b>Acc</b> steps make all drums hit harder ·
   the swing chips (<b>STR8 / 54 / 58 / 62 / 66</b>) jump to classic hardware-sampler swing feels ·
   <b>🎲 MUTATE</b> lightly varies the current drum pattern instead of replacing it ·
@@ -943,6 +953,8 @@
   at once (multi-touch, or a laptop chord) for real harmony — a 5th note is dropped with a
   toast if all four are busy. Turn on <b>SUS</b> first and a note's length follows how long
   you actually hold the key, instead of always snapping to one step.
+  Tapping a row's <b>H1-H4</b> name on the Beats grid does two steps at once: it arms
+  <b>● REC</b> and points it at that one voice, so you can set up a take without leaving Beats.
 
   <h2>Mixer</h2>
   Drag faders for volume · <b>tap</b> a channel name to mute · <b>hold</b> it to solo.
@@ -1733,6 +1745,7 @@
     const lbl = document.createElement('div');
     lbl.className = 'tname';
     lbl.textContent = 'H' + (v + 1);
+    lbl.title = 'Tap to record onto H' + (v + 1);
     row.appendChild(lbl);
     for (let s = 0; s < STEPS; s++) {
       const c = document.createElement('div');
@@ -2102,11 +2115,12 @@
   const recBtn = document.getElementById('recBtn');
   const miniRec = document.getElementById('miniRec');
   const miniPlay = document.getElementById('miniPlay');
-  function setRec(v) {
+  function setRec(v, msg) {
     recArmed = v;
     recBtn.classList.toggle('armed', v);
     miniRec.classList.toggle('armed', v);
-    toast(v ? 'REC armed — play keys to record' : 'REC off');
+    updateArmedRow(); // an armed voice's row name is a record light too
+    toast(msg || (v ? 'REC armed — play keys to record' : 'REC off'));
   }
   recBtn.addEventListener('pointerdown', e => {
     e.preventDefault();
@@ -2138,18 +2152,45 @@
   // track in a multitrack recorder
   let recordTargetVoice = 'auto';
   const voiceChips = document.querySelectorAll('.voice-chips .chip');
+  const chipVoice = chip => chip.dataset.voice === 'auto' ? 'auto' : +chip.dataset.voice;
   function updateArmedRow() {
     document.querySelectorAll('.track.harmony').forEach(row => {
-      row.classList.toggle('armed', recordTargetVoice !== 'auto' && +row.dataset.voice === recordTargetVoice);
+      const targeted = recordTargetVoice !== 'auto' && +row.dataset.voice === recordTargetVoice;
+      row.classList.toggle('armed', targeted);
+      row.classList.toggle('rec-armed', targeted && recArmed);
     });
+  }
+  function setRecordTargetVoice(voice) {
+    recordTargetVoice = voice;
+    voiceChips.forEach(c => c.classList.toggle('on', chipVoice(c) === voice));
+    updateArmedRow();
   }
   voiceChips.forEach(chip => {
     chip.addEventListener('pointerdown', e => {
       e.preventDefault();
       unlock();
-      recordTargetVoice = chip.dataset.voice === 'auto' ? 'auto' : +chip.dataset.voice;
-      voiceChips.forEach(c => c.classList.toggle('on', c === chip));
-      updateArmedRow();
+      setRecordTargetVoice(chipVoice(chip));
+    });
+  });
+
+  // tapping a harmony row's own name arms REC straight onto that voice —
+  // the grid's version of the H1-H4 chips, so a take can be set up without
+  // leaving Beats. Tapping the armed one again disarms it and goes back to
+  // AUTO. On click rather than this app's usual pointerdown: the Grid
+  // subtab scrolls on short phones, and a scroll that happens to start on
+  // a row name must not arm a track.
+  document.querySelectorAll('.track.harmony').forEach(row => {
+    const v = +row.dataset.voice;
+    row.querySelector('.tname').addEventListener('click', () => {
+      unlock();
+      const label = 'H' + (v + 1);
+      if (recArmed && recordTargetVoice === v) {
+        setRecordTargetVoice('auto');
+        setRec(false, label + ' disarmed — REC off');
+        return;
+      }
+      setRecordTargetVoice(v);
+      setRec(true, label + ' armed — play keys to record onto it');
     });
   });
 
