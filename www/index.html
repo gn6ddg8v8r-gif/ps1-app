@@ -164,7 +164,16 @@
   /* ---------- tablet: wider single column ---------- */
   @media (min-width: 640px) {
     .device { max-width: 560px; }
-    #scope { height: 64px; }
+    /* same key shapes as on phones, scaled to this 560px width (90% / 60%) */
+    .keyboard-wrap { max-height: 504px !important; }
+    .keyboard-wrap.mini { max-height: 336px !important; }
+  }
+  /* taller scope on real tablets only — not desktop (its zero-scroll
+     layout is tuned around the 46px scope) or a phone turned sideways (no
+     height to spare). !important because the base #scope rule sits later
+     in this stylesheet; without it this rule silently never applied */
+  @media (min-width: 640px) and (max-width: 999px) and (min-height: 600px) {
+    #scope { height: 64px !important; }
   }
 
   /* ---------- desktop / iPad landscape: two columns, no tabs ---------- */
@@ -357,6 +366,14 @@
     touch-action: none;
   }
   .fine-btn:active { transform: translateY(1px); box-shadow: none; }
+  /* phones: − value + in one row needs 92px, but a phone's knob column
+     only gets ~78-86px, which pushed the 4th knob off the right edge — so
+     the value moves up onto its own line and − + sit side by side under
+     it. Tablets/desktop have the width, so they keep the one-row layout */
+  @media (max-width: 639px) {
+    .fine-row { flex-wrap: wrap; justify-content: center; gap: 2px 12px; }
+    .fine-row .kval { order: -1; flex-basis: 100%; }
+  }
   .bank-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 8px; }
   .bank {
     font-family: 'IBM Plex Mono', monospace;
@@ -385,7 +402,15 @@
   .oct-btn:active, .bpm-btn:active { transform: translateY(1px); box-shadow: 0 1px 0 rgba(0,0,0,0.35); }
   .oct-display { font-size: 12px; font-weight: 600; letter-spacing: 0.1em; width: 70px; text-align: center; }
 
-  .keyboard-wrap { flex: 1; display: flex; flex-direction: column; margin-top: 8px; min-height: 150px; }
+  /* max-height: uncapped, a tall phone stretches the white keys to ~9x
+     longer than wide, which reads as a stretched image rather than keys.
+     Capping at 90% of the screen width (396px = 90% of .device's 440px
+     max) holds them at ~7x on every phone size, close to real keys */
+  .keyboard-wrap { flex: 1; display: flex; flex-direction: column; margin-top: 8px; min-height: 150px; max-height: min(90vw, 396px); }
+  /* once the keyboard hits that cap, spread the leftover height evenly
+     between the Play rows instead of pooling it as one empty band — keys
+     stay pinned to the bottom edge, where they've always been */
+  #keysPlay { justify-content: space-between; }
   .keyboard {
     position: relative; flex: 1;
     border-radius: 10px 10px 6px 6px; overflow: hidden;
@@ -414,12 +439,26 @@
   .bkey.held { background: var(--accent); }
   .bkey.inert { opacity: 0.35; }
 
+  /* mini keyboards (Keys/Patch, Beats/Grid) keep base .keyboard-wrap's
+     flex:1, so they stretch down into whatever height their subtab has
+     left over — min-height is the floor on phones with none to spare
+     (and also replaces base's 150px), max-height the same "real keys, not
+     stretched ones" cap as the main keyboard, scaled down to ~6x */
   .keyboard-wrap.mini {
-    flex: none;
-    min-height: 0;   /* required — base .keyboard-wrap's min-height:150px
-                         would otherwise silently override height below */
-    height: 80px;
+    flex-direction: row; gap: 6px;
+    min-height: 88px;
+    max-height: min(60vw, 264px);
   }
+  /* octave +/- stacked in a strip on the left, like a hardware mini
+     controller — it costs no height, which Beats/Grid has almost none of.
+     31px + the 6px gap above = the pattern grid's 34px name column + 3px
+     gap, so on GRID the keys line up exactly under the 16 step columns */
+  .mini-oct {
+    flex: none; width: 31px;
+    display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .mini-oct .oct-btn { width: 100%; height: 28px; font-size: 16px; }
+  .mini-oct-val { font-size: 13px; font-weight: 600; text-align: center; line-height: 1.2; }
 
   /* ---------- sequencer ---------- */
   .transport { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-shrink: 0; }
@@ -699,6 +738,11 @@
       </div>
     </div>
     <div class="keyboard-wrap mini">
+      <div class="mini-oct">
+        <button class="oct-btn" data-oct="1" aria-label="Octave up">+</button>
+        <div class="mini-oct-val"><div class="mini-kname">OCT</div><span class="oct-val">4</span></div>
+        <button class="oct-btn" data-oct="-1" aria-label="Octave down">−</button>
+      </div>
       <div class="keyboard" id="keyboardPatch"></div>
     </div>
     </div>
@@ -709,9 +753,9 @@
         <div class="knob mini" id="keysVolKnob"><div class="pointer" id="keysVolPointer"></div></div>
         <div class="mini-kname">VOL</div>
       </div>
-      <button class="oct-btn" id="octDown">−</button>
-      <div class="oct-display">OCT <span id="octVal">4</span></div>
-      <button class="oct-btn" id="octUp">+</button>
+      <button class="oct-btn" data-oct="-1">−</button>
+      <div class="oct-display">OCT <span class="oct-val">4</span></div>
+      <button class="oct-btn" data-oct="1">+</button>
     </div>
 
     <div class="mini-transport">
@@ -770,6 +814,11 @@
       <button class="io-btn" id="fillBtn">🔥 FILL</button>
     </div>
     <div class="keyboard-wrap mini">
+      <div class="mini-oct">
+        <button class="oct-btn" data-oct="1" aria-label="Octave up">+</button>
+        <div class="mini-oct-val"><div class="mini-kname">OCT</div><span class="oct-val">4</span></div>
+        <button class="oct-btn" data-oct="-1" aria-label="Octave down">−</button>
+      </div>
       <div class="keyboard" id="keyboardGrid"></div>
     </div>
     </div>
@@ -855,6 +904,8 @@
   <h2>Keys</h2>
   <b>PATCH / PLAY</b> switch between shaping the sound and playing it ·
   Slide your finger across keys to glide · multi-touch works ·
+  the small keyboards on <b>PATCH</b> and Beats <b>GRID</b> have their own <b>+ / −</b> octave
+  buttons on the left — all three keyboards share one octave, so shifting it anywhere shifts it everywhere ·
   <b>MAIN / ENV / OSC / LOFI</b> switch knob banks · drag knobs up/down, or tap <b>− +</b> for fine steps ·
   <b>▶</b> and <b>●</b> under the octave buttons run the beat and arm recording from here ·
   <b>SUS</b> next to them turns on sustain — while it's on, how long you hold a key is how
@@ -1845,7 +1896,8 @@
   // more live-recording-only entry), cycling through the chromatic octave
   // on repeat taps of the same cell within a short window — mirrors Bass's
   // tap-to-cycle. Rooted at the shared `octave` var the live keyboard uses,
-  // so shifting octave on the Keys panel also shifts what tapping here produces.
+  // so shifting octave (Keys panel, or the mini keyboard's +/− right here on
+  // GRID) also shifts what tapping here produces.
   let harmonyPitchEdit = null; // { voice, step, timer } — cell still mid pitch-cycle
   function harmonyChromaticNote(offset0to11) { return (octave + 1) * 12 + offset0to11; }
   function armHarmonyPitchEdit(v, s) {
@@ -4334,14 +4386,8 @@
       playing ? stopSeq() : startSeq();
       return;
     }
-    if (e.code === 'KeyZ') {
-      if (octave > 1) { octave--; octVal.textContent = octave; }
-      return;
-    }
-    if (e.code === 'KeyX') {
-      if (octave < 7) { octave++; octVal.textContent = octave; }
-      return;
-    }
+    if (e.code === 'KeyZ') { setOctave(octave - 1); return; }
+    if (e.code === 'KeyX') { setOctave(octave + 1); return; }
     const semi = KEYMAP[e.code];
     if (semi === undefined) return;
     unlock();
@@ -4621,12 +4667,15 @@
   });
 
   // ---------------- octave ----------------
-  const octVal = document.getElementById('octVal');
-  document.getElementById('octDown').addEventListener('pointerdown', () => {
-    if (octave > 1) { octave--; octVal.textContent = octave; }
-  });
-  document.getElementById('octUp').addEventListener('pointerdown', () => {
-    if (octave < 7) { octave++; octVal.textContent = octave; }
+  // one shared octave for all three keyboards (Play plus the Patch/Grid
+  // minis), so every OCT readout has to move together
+  const octVals = document.querySelectorAll('.oct-val');
+  function setOctave(n) {
+    octave = Math.max(1, Math.min(7, n));
+    octVals.forEach(el => { el.textContent = octave; });
+  }
+  document.querySelectorAll('[data-oct]').forEach(btn => {
+    btn.addEventListener('pointerdown', () => setOctave(octave + parseInt(btn.dataset.oct)));
   });
 
   // ---------------- knobs ----------------
